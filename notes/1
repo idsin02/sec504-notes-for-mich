@@ -1,0 +1,456 @@
+Refer page 13-19
+
+The whole attack in simple terms
+
+Think of the attack chain like this:
+
+Internet recon → vulnerable CRM → command execution → proxy/pivot → internal recon → password cracking/reuse → lateral movement → domain compromise → persistence + C2
+
+The key lesson is:
+
+Finding and killing malware on one server does not mean you have eradicated the incident.
+
+By the time the defenders noticed Office_Remoter.exe listening on TCP/4444, Green Penguin had already created multiple ways to maintain access.
+
+1. Reconnaissance
+
+Green Penguin first scanned Argous's publicly accessible infrastructure.
+
+They discovered things such as:
+
+Firewall
+Public-facing CRM application
+Internet-accessible infrastructure
+
+The material says this happened roughly three months before detection.
+
+What went wrong?
+
+Mistake #1: Firewall alerts showing pre-attack scanning were ignored.
+
+The admins basically thought:
+
+"It's just random Internet scanning. The firewall blocked it, so we're fine."
+
+But reconnaissance can be an early indicator that someone is mapping your environment.
+
+Mistake #2: No threat intelligence was being used.
+
+The attacker's VPN IP addresses were already considered malicious, but Argous wasn't correlating the scanning with that intelligence.
+
+GCIH takeaway
+
+Don't look only at whether the firewall blocked something.
+
+Also ask:
+
+Who is trying, what are they looking for, and is the source already associated with malicious activity?
+
+2. Scan and exploit the web application
+
+Next, the attackers investigated the custom CRM application.
+
+They found:
+
+SSRF
+Command injection
+SSRF
+
+Server-Side Request Forgery essentially lets an attacker abuse the server to make requests that the attacker ordinarily couldn't make directly.
+
+In this scenario, SSRF helped the attackers access information that ultimately exposed more about the CRM application.
+
+Command injection
+
+This was much worse.
+
+The vulnerability allowed the attacker to execute arbitrary commands on the CRM server.
+
+So conceptually:
+
+Internet attacker
+
+↓
+
+CRM vulnerability
+
+↓
+
+Execute commands on CRM server
+
+At this point we're no longer dealing with mere reconnaissance. The web server is compromised.
+
+🔥 Mistake #3
+
+This one is especially important.
+
+A penetration test had already found the vulnerabilities.
+
+But remediation wasn't prioritized because the CRM wasn't considered important enough compared with revenue-producing development.
+
+That's a classic risk-management failure:
+
+"There's nothing valuable on this server."
+
+The server itself may not contain the crown jewels, but it can become a stepping stone to the systems that do.
+
+3. Pivot into the internal network
+
+This is probably one of the most important concepts in this scenario.
+
+The CRM server had both:
+
+Public connectivity
+
+and
+
+Private/internal connectivity
+
+In other words, it was dual-homed.
+
+Green Penguin installed:
+
+Office_Remoter.exe
+
+listening on:
+
+TCP/4444
+
+The program acted as a proxy.
+
+Conceptually:
+
+Attacker → CRM:4444 → Internal network
+
+🔥 This changes everything.
+
+The firewall may prevent the attacker from directly reaching internal machines, but the attacker has compromised something that can reach them.
+
+That's pivoting.
+
+Mistake #4
+
+The CRM server didn't need to be dual-homed but had been left configured that way.
+
+Mistake #5
+
+There wasn't sufficient internal network monitoring.
+
+The organization trusted the perimeter firewall too much.
+
+Remember for GCIH
+
+Pivoting = using a compromised system as an intermediary to reach other systems/networks.
+
+4. Internal reconnaissance
+
+Now Green Penguin can effectively look at the environment from behind the firewall.
+
+The attacker starts reconnaissance again.
+
+But now instead of:
+
+Internet → corporate perimeter
+
+it's effectively:
+
+Compromised CRM → internal systems
+
+This is why internal visibility matters.
+
+A perimeter firewall isn't going to magically protect you once the attacker obtains a foothold behind that perimeter.
+
+5. Credential compromise
+
+Now things get really interesting.
+
+The CRM database contained:
+
+usernames
+password hashes
+
+The attackers cracked several passwords.
+
+But the huge problem wasn't simply that passwords could be cracked.
+
+The users had reused those passwords for their Windows/domain accounts.
+
+So:
+
+CRM password cracked
+
+↓
+
+Same password used for domain account
+
+↓
+
+Valid domain credentials
+
+That's a massive expansion of attacker capability.
+
+6. Database server compromise
+
+One of the cracked accounts belonged to a database administrator.
+
+That user had local administrator privileges on the database server.
+
+So Green Penguin could move from:
+
+CRM
+
+→
+
+Database server
+
+This is lateral movement.
+
+Mistake #6
+
+Easily cracked passwords.
+
+Mistake #7
+
+Passwords reused between the CRM and Windows domain.
+
+For the exam, notice that these are related but separate problems.
+
+Weak password
+
+→ attacker cracks it.
+
+Password reuse
+
+→ one compromised credential becomes useful somewhere else.
+
+7. AssetMgtAcct becomes the jackpot
+
+During internal reconnaissance, Green Penguin notices:
+
+AssetMgtAcct
+
+exists across systems.
+
+The attackers use their access to obtain credential material associated with the account and crack the password offline.
+
+Then comes the really important discovery:
+
+The same AssetMgtAcct password was being used throughout the environment.
+
+So one compromised local administrative credential now provides access across multiple systems.
+
+This lets Green Penguin expand access dramatically.
+
+Mistake #8
+
+Same asset-management account/password across systems.
+
+This is a classic reason why credential reuse and shared local administrator credentials are dangerous.
+
+8. Domain compromise
+
+With administrative access across systems, Green Penguin deploys additional malware and eventually gains access to the:
+
+Domain Controller
+
+Now the incident is dramatically bigger than:
+
+"Something weird is listening on the CRM server."
+
+The attacker has progressed through:
+
+Web server compromise
+
+→ Pivot
+
+→ Credential compromise
+
+→ Lateral movement
+
+→ Privilege/access expansion
+
+→ Domain compromise
+
+Mistake #9
+
+The organization wasn't alerting when new software/persistence mechanisms appeared on critical systems.
+
+9. Command & Control
+
+Green Penguin deploys another program:
+
+Office_Techneter.exe
+
+The material describes the program communicating with:
+
+social.technet.microsoft.com
+
+over:
+
+TCP/443
+
+The attackers use forum content there as a C2 mechanism.
+
+This illustrates an important C2 idea.
+
+Traffic doesn't necessarily scream:
+
+EVIL C2 SERVER!!!
+
+An attacker can abuse legitimate-looking infrastructure or services to make malicious communication less obvious.
+
+10. Where the incident responder makes the critical mistake
+
+Now go back to the defender's perspective.
+
+They discover:
+
+Office_Remoter.exe → TCP/4444 listener
+
+and
+
+Office_Techneter.exe → outbound TCP/443
+
+They kill both processes.
+
+Traffic looks normal again.
+
+So they effectively say:
+
+CRM is good again. 👍
+
+But look at what the attacker still has.
+
+According to your material, Green Penguin still has:
+
+Malware on three other systems
+The CRM command-injection vulnerability
+Reverse TCP connections from internal systems
+Additional access/persistence elsewhere
+
+That's the massive lesson of this scenario.
+
+🚨 Containment ≠ Eradication ≠ Recovery
+
+Killing the obviously malicious process may provide containment of one observable symptom.
+
+It doesn't establish that the adversary has been removed from the environment.
+
+Mistake #10 and #11
+
+Mistake #10: Defensive filtering wasn't added for the incoming malicious TCP/4444 traffic.
+
+Mistake #11: The responders didn't search the rest of the environment for related IOCs.
+
+That second one is especially relevant to your real threat-hunting work.
+
+If you discover something such as:
+
+Office_Remoter.exe
+
+on:
+
+CRM01
+
+you shouldn't stop with:
+
+"Killed process ✅"
+
+You pivot on the evidence.
+
+For example, conceptually investigate:
+
+Filename → hash → devices → process ancestry → connections → destination → accounts → authentication → related systems
+
+That's effectively moving from incident response into enterprise-wide scoping/threat hunting.
+
+🔥 The attack chain you should remember
+
+For GCIH, I'd memorize the logic, not every sentence:
+
+1. Recon → public infrastructure scanned
+
+2. Vulnerability discovery → SSRF + command injection in CRM
+
+3. Initial compromise → command execution on CRM
+
+4. Pivot → Office_Remoter.exe + TCP/4444
+
+5. Internal reconnaissance → attacker scans behind firewall
+
+6. Credential access → CRM password hashes cracked
+
+7. Credential reuse → CRM credentials also work in domain
+
+8. Lateral movement → database administrator access
+
+9. More credential compromise → AssetMgtAcct
+
+10. Shared credential reuse → administrative access across systems
+
+11. Domain compromise → Domain Controller accessed
+
+12. Persistence/C2 → malware distributed + Office_Techneter.exe
+
+13. Incomplete IR → responders kill malware only on the CRM
+
+14. Attacker survives → other compromised hosts/access paths remain
+
+🎯 The 11 mistakes in one revision sheet
+Ignored firewall reconnaissance alerts
+Didn't use available threat intelligence
+Known SSRF/command-injection vulnerabilities weren't fixed
+Unnecessary dual-homed CRM enabled pivoting
+Insufficient internal-network monitoring
+Easily cracked passwords
+CRM → domain password reuse
+Same asset-management password across systems
+No alerting for unexpected software/persistence on critical systems
+Insufficient firewall filtering after discovery
+Failed to hunt the remaining environment for IOCs
+🧠 GCIH-style mental model
+
+If an exam scenario says:
+
+An Internet-facing web server is compromised, and the attacker uses it to communicate with otherwise unreachable internal hosts.
+
+Think:
+
+Pivoting
+
+If it says:
+
+User uses the same password for an application and Active Directory.
+
+Think:
+
+Password reuse → credential compromise/lateral movement
+
+If it says:
+
+Incident responder kills the malicious process and immediately returns the machine to production.
+
+Think:
+
+Insufficient scoping/eradication
+
+If it says:
+
+Attacker compromises one host and investigates other internal systems.
+
+Think:
+
+Internal reconnaissance/discovery
+
+If it says:
+
+Attacker communicates using an otherwise legitimate Internet service.
+
+Think:
+
+C2 using legitimate infrastructure/services
+One sentence that captures the entire lesson
+
+The defenders treated the compromised CRM server as the incident, while the CRM server was actually only the attacker's initial foothold into a much larger enterprise compromise.
+
+And Dhruv, this scenario is very aligned with the hunting work you've already been doing. The habit you've developed of going from suspicious process → hash → network activity → child processes → other devices → account context is exactly the mindset this SEC504 scenario is trying to develop.
