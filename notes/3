@@ -1,0 +1,634 @@
+page 24-40
+Yep. This completes the DAIR foundation, and this part is worth knowing well for GCIH because SEC504 is now defining what each action actually means. The easiest way to retain it is to connect each phase to what you already do as a threat hunter.
+
+🧠 DAIR in one picture
+
+Think:
+
+Prepare → Detect → Verify/Triage → 🔄 Scope → Contain → Eradicate → Recover 🔄 → Debrief
+
+The middle four aren't a one-time sequence. New evidence can send you back through them.
+
+1. PREPARE: “Know thy organization”
+
+This is much broader than having an incident-response document.
+
+You want to know:
+
+What's important to the business?
+What systems/assets matter?
+What constitutes an incident according to policy?
+What telemetry exists?
+Where are the visibility gaps?
+Are backups actually trusted?
+Can systems be rebuilt from trusted/gold images?
+Do recovery procedures actually work?
+Is the IR team trained and practiced?
+One point I really like from the material
+
+Evidence collected but never reviewed doesn't help you detect incidents.
+
+You could ingest enormous amounts of EDR, firewall, proxy and authentication telemetry, but somebody or something still needs to analyze that data.
+
+That's very relevant to MDR.
+
+2. DETECT: IOA vs EOI
+
+This distinction is exam-worthy.
+
+IOA: Indicator of Attack
+
+Evidence of attacker activity or attempted attacker activity.
+
+Examples from your material:
+
+unusual login failures
+exploit evidence in web-server logs
+malicious email attachment
+
+The important part:
+
+The attack does NOT necessarily need to succeed.
+
+An attempted attack can still produce an IOA.
+
+EOI: Event of Interest
+
+This is more organization-specific.
+
+Essentially:
+
+Is this important enough according to our organization's concerns/policies that we should investigate/respond?
+
+Therefore:
+
+IOA = attack-related activity
+
+EOI = something the organization considers worth investigating
+
+An IOA may become an EOI depending on organizational policy and context.
+
+Example
+
+Imagine you see:
+
+25 failed logons
+↓
+Internet-facing service
+
+
+That may be an IOA.
+
+But suppose policy says isolated Internet login failures are extremely common and only certain patterns warrant investigation.
+
+Then it might not become an EOI requiring response yet.
+
+Add:
+
+25 failures
+↓
+Successful login
+↓
+Same source
+↓
+Privileged account
+
+
+Now organizational context can dramatically change the priority.
+
+3. Passive detection vs Active detection
+
+This is another easy GCIH concept.
+
+Passive detection
+
+Something tells you about suspicious activity.
+
+Examples from the material:
+
+User reports something
+System administrator notices something
+Alert/report is brought to IR
+
+Essentially:
+
+Threat comes to your attention.
+
+Active detection
+
+You deliberately search for threats.
+
+That's threat hunting.
+
+And that's literally what you do.
+
+For example:
+
+“Let's search 90 days of Defender telemetry for EXEs executed from removable-media/non-system drives.”
+
+Nobody necessarily gave you an alert.
+
+You're proactively searching for behavior representing possible compromise.
+
+4. MTTD vs MTTR
+
+Definitely remember this distinction.
+
+MTTD: Mean Time To Detect
+
+Simplified:
+
+Incident begins → Organization detects it
+
+You want this ↓ lower.
+
+Threat hunting can help reduce MTTD because you're proactively looking for malicious behavior.
+
+MTTR: Mean Time To Response
+
+In the SEC504 material you're studying, think:
+
+Detection → threat contained/remediated
+
+Again, lower is desirable.
+
+Memory trick
+
+D = Detect
+
+MTTD → How long until we Detect?
+
+R = Response
+
+MTTR → How long until we Respond?
+
+5. VERIFY + TRIAGE
+
+Now you've detected something.
+
+Don't immediately assume:
+
+MALWARE! BREACH! 🚨
+
+First establish whether you're actually looking at an incident worthy of response.
+
+Verify
+
+Is this actually an incident?
+
+Triage
+
+How important is it and what resources/people should become involved?
+
+SEC504 gives a nice comparison.
+
+A ransomware compromise and an employee threatening another employee via email can both require response, but the right responders and priorities aren't necessarily the same.
+
+This is also where business/management/stakeholder input matters.
+
+6. WordPress example: Hack, benign, or unknown?
+
+This slide is teaching you something more important than the answer.
+
+You have roughly 11 minutes of WordPress failed-login events from many source IP addresses.
+
+Question:
+
+Is this malicious or benign?
+
+Correct mindset: Unknown with the available evidence.
+
+You need context.
+
+Ask:
+
+What's the baseline?
+
+How busy is this server normally?
+Are failed logins common?
+Is geographic/source-IP diversity normal?
+Are any failures followed by successful authentication?
+Are particular accounts being targeted?
+Does the pattern continue outside this tiny observation window?
+
+This connects directly to how you've been analyzing Metso results.
+
+You find:
+
+weird.exe
++
+unknown SHA256
++
+network connection
+
+
+Temptation:
+
+“C2!”
+
+Better IR thinking:
+
+Interesting EOI. Now collect enough context to verify it.
+
+That difference is huge.
+
+7. SCOPE ⭐
+
+I would put a huge star next to this for you.
+
+Scope means:
+
+Determine the breadth of the incident.
+
+Say you've confirmed a malicious IP:
+
+203.x.x.x
+
+
+Don't only investigate the host that triggered the alert.
+
+Ask:
+
+Which other hosts communicated with this IP?
+
+You find a malicious URL:
+
+What other endpoints accessed that URL?
+
+You find malicious registry modification:
+
+Where else does that registry modification exist?
+
+That's scope.
+
+This is exactly your hunting methodology
+
+Suppose tomorrow in your Metso hunt:
+
+D:\Something.exe
+SHA256 = ABC123
+→ weird-domain.example
+
+
+Once verified as suspicious, you pivot:
+
+Hash scope
+
+Which endpoints executed ABC123?
+
+Filename scope
+
+Where else is Something.exe present?
+
+Network scope
+
+What other machines contacted the destination?
+
+Account scope
+
+What did the associated account do elsewhere?
+
+Behavioral scope
+
+Are other binaries displaying the same behavior?
+
+That's precisely the SEC504 concept.
+
+8. CONTAIN: “Stop them”
+
+Very important distinction.
+
+Containment means:
+
+Stop the attacker from continuing operations or expanding access.
+
+Examples in your material include:
+
+Network isolation
+Network filtering
+Account locking
+DNS-related changes
+Access restrictions
+
+But SEC504 adds something very important:
+
+Evidence collection can happen here.
+
+Potential evidence includes:
+
+Logs
+Memory
+Disk images
+Network data
+Live system information
+
+This explains why:
+
+Immediately killing everything suspicious isn't necessarily good incident response.
+
+You might destroy valuable evidence.
+
+9. ERADICATE: “Remove them”
+
+Now eliminate what the attacker did.
+
+Think:
+
+Contain = stop attacker
+
+Eradicate = remove attacker/artifacts
+
+Examples from your material:
+
+Remove malicious processes
+Remove unauthorized accounts/persistence
+Restore systems from trusted backups
+Patch vulnerabilities
+Restore modified content
+Address attacker-created changes
+Easy scenario
+
+Compromised account is actively being abused.
+
+Disable/restrict account
+
+→ Containment
+
+Then investigate and remove attacker-created persistence, reset/reissue necessary credentials, remediate the exploited weakness, etc.
+
+→ Eradication
+
+10. RECOVER: “Fix WHY this happened”
+
+This is where SEC504 gets deeper than:
+
+“Reimage PC. Ticket closed.”
+
+Recovery asks:
+
+Why did this happen?
+
+Suppose:
+
+Weak password → compromise
+
+Changing that password may help eradicate the immediate compromise.
+
+But root-cause analysis asks:
+
+Why was the weak password possible?
+
+Possibilities raised by the methodology include:
+
+Policy wasn't adequate
+Policy wasn't enforced
+Auditing didn't detect the condition
+Earlier warning signs weren't detected
+
+That's much stronger analysis.
+
+🔥 Root cause vs immediate cause
+
+Imagine:
+
+Attacker successfully guessed password
+
+Immediate explanation:
+
+Weak password.
+
+Root-cause thinking:
+
+Why could a weak password exist and remain undetected?
+
+That's the mindset SEC504 wants.
+
+And notice something important:
+
+Root-cause analysis should examine controls, not just blame a person.
+
+If somebody configured something insecurely, simply saying:
+
+“That admin screwed up.”
+
+doesn't solve the organizational problem.
+
+Ask:
+
+What control allowed that configuration?
+
+11. Recovery includes adjacent risk
+
+This part is particularly useful.
+
+Imagine a developer workstation is compromised.
+
+You clean the workstation.
+
+Done?
+
+No.
+
+The developer might have access to:
+
+Cloud environment
+Source code
+Authentication tokens/keys
+Development infrastructure
+SCM workflows
+
+Therefore recovery considers those potentially exposed dependencies too.
+
+Again:
+
+The initially compromised device isn't necessarily the entire scope of risk.
+
+12. Monitor after recovery
+
+Don't just put the host back online and forget it.
+
+Especially when persistence was discovered.
+
+After restoration:
+
+Monitor closely for evidence that the attacker returns.
+
+That's also why you'd retain your incident-specific IOCs/TTPs for monitoring.
+
+🔄 13. REPEAT RESPONSE ACTIONS
+
+Now we get to the heart of DAIR.
+
+Suppose investigation discovers a new C2 domain:
+
+evil-domain.example
+
+
+What next?
+
+LOOP BACK TO SCOPE.
+
+Search:
+
+Which other devices contacted it?
+
+You discover five previously unknown systems.
+
+Now containment changes.
+
+During analysis you discover:
+
+Malware uses DNS-based C2.
+
+Containment strategy may change again.
+
+Later you discover:
+
+Attacker established another persistence mechanism.
+
+Back around the loop.
+
+Therefore:
+
+Scope → Contain → Eradicate → Recover
+
+🔄
+
+Scope → Contain → Eradicate → Recover
+
+🔄
+
+until the organization has sufficiently addressed the incident.
+
+14. DEBRIEF
+
+Finally:
+
+What happened?
+
+What went well?
+
+What failed?
+
+What have we changed?
+
+What should improve?
+
+The incident report may contain things like:
+
+Incident details
+Timeline
+Impact
+Actions taken
+Lessons learned
+Improvement opportunities
+
+And one SEC504 point worth remembering:
+
+Separate facts from conjecture and remain objective.
+
+That's exactly how a good threat-hunt report should also read.
+
+Instead of:
+
+“The attacker definitely used this executable to establish C2.”
+
+when evidence isn't sufficient,
+
+say:
+
+“The executable established outbound communications to the identified infrastructure; available evidence does not establish whether the traffic represents C2.”
+
+Much better analyst language.
+
+🎯 The DAIR cheat sheet I'd use for GCIH
+PREPARE
+
+Know thy organization
+
+Visibility + policies + backups + recovery/testing + trained IR team.
+
+⬇️
+
+DETECT
+
+Something happened
+
+IOA + EOI
+ Passive detection + active threat hunting
+ Reduce MTTD
+
+⬇️
+
+VERIFY/TRIAGE
+
+Is it real and how important is it?
+
+Confirm incident → prioritize → involve appropriate stakeholders/resources.
+
+⬇️
+
+SCOPE
+
+How big is it?
+
+IOC/TTP → hunt across environment.
+
+⭐ One of the biggest lessons of SEC504.
+
+⬇️
+
+CONTAIN
+
+Stop them
+
+Prevent continued attacker activity/spread while preserving useful evidence.
+
+⬇️
+
+ERADICATE
+
+Remove them
+
+Remove malicious artifacts/persistence and address known compromise.
+
+⬇️
+
+RECOVER
+
+Fix and safely restore
+
+Root cause → corrective controls → test → restore → monitor.
+
+↩️ New information? Go back through the response loop.
+
+⬇️
+
+DEBRIEF
+
+Learn
+
+Facts → timeline → impact → lessons → improvements.
+
+🧠 And three pairs you absolutely shouldn't confuse
+
+IOA vs EOI
+
+IOA = evidence of attack activity
+ EOI = activity the organization considers important enough to investigate/respond to
+
+MTTD vs MTTR
+
+MTTD = incident begins → detection
+ MTTR = detection → response/remediation
+
+Contain vs Eradicate
+
+Contain = stop
+ Eradicate = remove
+
+⭐ And this is the sentence I'd remember from the entire module:
+
+Detection gives you the lead; verification establishes whether it matters; scoping tells you how far it goes; containment stops continued activity; eradication removes the threat; recovery fixes the underlying weaknesses and restores operations; new evidence can send you through the loop again.
+
+That is essentially SEC504's DAIR model in one sentence, and understanding that is far more useful for GCIH than trying to memorize all those pages word-for-word.
