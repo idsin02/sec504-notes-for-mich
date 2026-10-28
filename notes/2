@@ -1,0 +1,448 @@
+20-23
+
+Yep, this section is very important for GCIH. The main thing SEC504 wants you to understand is not just memorizing PICERL. It's understanding why real incident response can't be treated as a straight line.
+
+1. First, PICERL
+
+Classic incident response:
+
+P → I → C → E → R → L
+
+P: Preparation
+
+Everything done before the incident.
+
+Examples from your material:
+
+Policies/procedures
+Internal monitoring
+Security best practices
+Logging/auditing
+Threat intelligence
+
+Think: "Are we ready to respond?"
+
+I: Identification
+
+Detect that something may be wrong.
+
+Could come from:
+
+IDS alert
+User/help-desk report
+Sysadmin observation
+Monitoring
+
+Think: "Something suspicious happened."
+
+In Argous:
+
+TCP/4444 + Office_Remoter.exe
+
+would contribute to identifying the incident.
+
+C: Containment
+
+Stop the attacker/problem from spreading while considering evidence preservation.
+
+This point is critical:
+
+Containment is NOT necessarily killing every malicious process immediately.
+
+The material describes short-term containment, evidence collection, and potentially more invasive containment afterward.
+
+Think:
+
+"Limit the damage while preserving what we need to investigate."
+
+E: Eradication
+
+Remove what the attacker introduced or changed.
+
+Examples in your material include:
+
+Killing attacker processes
+Changing compromised passwords
+Removing malicious data
+Undoing attacker damage
+
+Think:
+
+Remove the threat.
+
+R: Recovery
+
+Return business systems to normal operation.
+
+Think:
+
+"Can we safely put the system back into service?"
+
+This distinction is exam-worthy:
+
+Containment = limit damage
+ Eradication = remove threat
+ Recovery = restore operation
+
+L: Lessons Learned
+
+Understand what happened and improve things so it doesn't happen again.
+
+But SEC504 emphasizes going deeper than:
+
+"User had a weak password."
+
+Ask:
+
+Why was a weak password possible?
+
+Was it:
+
+Bad policy?
+Poor enforcement?
+Another underlying control problem?
+
+That's root-cause thinking.
+
+2. What's wrong with PICERL?
+
+Not necessarily the model itself.
+
+The problem is when people interpret PICERL as:
+
+Preparation ✅ → Identification ✅ → Containment ✅ → Eradication ✅ → Recovery ✅ → Lessons Learned ✅
+
+Real incidents don't behave so neatly.
+
+Imagine during eradication you analyze a malicious executable and discover evidence that another 20 machines may have been affected.
+
+You cannot say:
+
+"Sorry, we're already on eradication. Scoping was the previous phase." 😂
+
+You go back and scope again.
+
+That's the entire motivation behind DAIR.
+
+🔥 Dynamic Approach to Incident Response (DAIR)
+
+The slide gives you:
+
+Prepare → Detect → Verify/Triage → Response Actions → Debrief
+
+And inside Response Actions you repeatedly cycle through:
+
+Scope ↔ Contain ↔ Eradicate ↔ Recover
+
+That's the big difference in mindset.
+
+DAIR is iterative
+
+Suppose you detect:
+
+weird.exe → malicious.example.com
+
+Detect
+
+EDR flags the activity.
+
+⬇️
+
+Verify/Triage
+
+Determine whether there's actually an incident and whether it warrants response.
+
+⬇️
+
+Scope
+
+Search the enterprise:
+
+Where else does this hash/process/account/network indicator appear?
+
+You discover three additional affected hosts.
+
+⬇️
+
+Contain
+
+Limit attacker access/spread.
+
+⬇️
+
+Eradicate
+
+Remove known threats and address compromised access.
+
+⬇️
+
+During eradication...
+
+You discover another IOC.
+
+Maybe another executable or different infrastructure.
+
+🚨 That changes your understanding of the incident.
+
+So you scope again.
+
+That new IOC might uncover additional systems.
+
+Then:
+
+Scope → Contain → Eradicate → Recover
+
+continues as necessary.
+
+That's why SEC504 calls it dynamic.
+
+3. This directly explains what went wrong at Argous
+
+Remember the previous scenario?
+
+Defender discovered:
+
+Office_Remoter.exe
+ TCP/4444
+
+and:
+
+Office_Techneter.exe
+ TCP/443
+
+The responder killed them.
+
+Then essentially:
+
+"CRM is okay again."
+
+That's precisely the problem SEC504 is describing.
+
+They jumped toward eradication/recovery without properly understanding the scope.
+
+They should have treated those artifacts as evidence that could help establish:
+
+How large is this compromise?
+
+Instead, other attacker access remained.
+
+So remember:
+
+🚨 IOC discovered → SCOPE
+
+Not merely:
+
+IOC discovered → delete it → close ticket
+4. Scoping is probably the MOST relevant part for you
+
+This maps perfectly to the threat hunting you've been doing.
+
+Suppose in your Metso hunt you find:
+
+D:\UnknownTool.exe
+       ↓
+Unknown SHA256
+       ↓
+External connection
+
+
+Don't immediately conclude "malware".
+
+But don't stop at that machine either.
+
+The investigative mindset is:
+
+Scope the indicators
+
+For example:
+
+SHA256 → where else observed?
+
+Filename → other endpoints?
+
+Destination → what other processes contacted it?
+
+Account → what else did that account execute/access?
+
+Process relationships → parent/child activity?
+
+Persistence → anything created or modified?
+
+Now imagine that investigation uncovers:
+
+Different.exe
+↓
+same destination
+↓
+on another endpoint
+
+
+That's new evidence.
+
+So you loop back and expand the investigation.
+
+This is essentially DAIR thinking applied to threat hunting.
+
+5. Containment vs Eradication is easy to confuse
+
+Remember it like this:
+
+CONTAIN = 🛑 STOP
+
+Prevent further impact/spread.
+
+ERADICATE = 🧹 REMOVE
+
+Remove attacker presence/artifacts and address what enabled continued access.
+
+RECOVER = 🟢 RESTORE
+
+Bring business operations back safely.
+
+6. Another big SEC504 lesson: evidence first
+
+Your material makes an important point.
+
+If your first reaction is:
+
+"MALWARE! KILL PROCESS!"
+
+you could destroy useful evidence before understanding what happened.
+
+For instance, evidence might help answer:
+
+What was running?
+How did it execute?
+What did it communicate with?
+What other systems might be involved?
+What techniques did the attacker use?
+
+Hence the general IR mindset:
+
+Understand enough to preserve necessary evidence while controlling the threat.
+
+This doesn't mean "never kill a process." If business risk requires immediate containment, containment may take priority. The point is that response decisions should be deliberate rather than automatic.
+
+7. The exam distinction I'd memorize
+
+If GCIH gives you:
+
+"The SOC receives an IDS alert indicating possible compromise."
+
+Think:
+
+Detection / Identification
+
+"The analyst determines whether the activity actually represents an incident."
+
+Think:
+
+Verify / Triage
+
+"Determine every affected host/account and the breadth of compromise."
+
+Think:
+
+Scope
+
+⭐ Pay particular attention to this one.
+
+"Prevent compromised systems from continuing to affect the environment."
+
+Think:
+
+Contain
+
+"Remove attacker processes/artifacts and reset compromised credentials."
+
+Think:
+
+Eradicate
+
+"Bring clean business systems/services back online."
+
+Think:
+
+Recover
+
+"Analyze what worked, what failed, root cause, and opportunities to improve."
+
+Think:
+
+Debrief / Lessons Learned
+
+8. PICERL vs DAIR
+PICERL	DAIRPreparation	Prepare
+Identification	Detect + Verify/Triage
+Containment	Response loop
+Eradication	Response loop
+Recovery	Response loop
+Lessons Learned	Debrief
+The crucial conceptual difference
+
+PICERL can be treated too linearly in practice.
+
+DAIR explicitly emphasizes repeatedly moving through response actions as new information is discovered.
+
+SEC504 even gives the tip on the slide:
+
+Think of incident response as waypoints, outcomes, and actions rather than a linear set of steps.
+
+That's worth remembering.
+
+🧠 GCIH memory trick
+
+Think:
+
+P D V → S C E R → D
+
+Prepare
+ Detect
+ Verify/Triage
+
+then loop:
+
+Scope
+ Contain
+ Eradicate
+ Recover
+
+finally:
+
+Debrief
+
+And inside your head put a 🔄 around SCER.
+
+That's DAIR.
+
+🎯 What I'd actually memorize from these pages
+
+You don't need every paragraph.
+
+Remember these 5 things:
+
+1. PICERL
+
+Preparation → Identification → Containment → Eradication → Recovery → Lessons Learned
+
+2. Scoping is critical
+
+Don't investigate only the system where the alert appeared. Determine the breadth of the compromise.
+
+3. Containment ≠ Eradication
+
+Contain limits the incident; eradicate removes the threat.
+
+4. Preserve useful evidence
+
+Immediately killing attacker processes can make understanding the incident harder.
+
+5. DAIR is iterative
+
+New information can send you back through Scope → Contain → Eradicate → Recover repeatedly.
+
+🔥 One line to lock it into memory:
+
+PICERL tells you the major incident-response functions; DAIR emphasizes that real investigations repeatedly revisit those functions as new evidence changes the known scope.
+
+This is one of those SEC504 sections I'd understand deeply rather than memorize word-for-word, because scenario questions can test whether you recognize what the responder should do next.
