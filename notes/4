@@ -1,0 +1,577 @@
+Yep, now SEC504 is moving from incident-response methodology into actual Windows live investigation. This is where it starts overlapping heavily with the Defender hunting you already do.
+
+1. What is this section really teaching?
+
+The question is:
+
+How do I find compromise when I don't already know exactly what I'm looking for?
+
+You can investigate two broad areas:
+
+Host behavior
+
+Processes
+Parent/child relationships
+Command lines
+Paths
+Persistence-related artifacts
+
+Network behavior
+
+Listening ports
+Established connections
+Remote IPs
+Which process owns a connection
+
+And then you pivot between them.
+
+Conceptually:
+
+Suspicious process → command line → parent → network → remote destination → other artifacts → scope
+
+2. Why network traffic alone isn't enough
+
+Looking at network traffic is useful because attackers commonly interact with victim systems remotely.
+
+But SEC504 points out limitations:
+
+Some malware may generate little or no network traffic.
+Encryption can hide application content.
+Attackers may blend into normal protocols/services such as SMB, RDP or VNC.
+
+So:
+
+Network analysis + host analysis together are much stronger than either alone.
+
+That's exactly why EDR telemetry is so useful in your threat-hunting work.
+
+3. PowerShell becomes the investigation tool
+
+SEC504 uses PowerShell heavily because Windows exposes enormous amounts of system information through it.
+
+Start with:
+
+Get-Process
+
+
+This gives you running processes.
+
+Filter by name:
+
+Get-Process 'powersh*'
+
+
+And this:
+
+Get-Process 'powershell' | Select-Object *
+
+
+means:
+
+Get the PowerShell process object and show its available properties rather than only PowerShell's default display.
+
+🧠 Important concept: PowerShell works with objects
+
+This becomes important later.
+
+When you do:
+
+Get-Process
+
+
+PowerShell isn't merely returning lines of text.
+
+It's returning objects with properties.
+
+The pipeline:
+
+Command → objects → filtering/selection → output
+
+
+is fundamental PowerShell thinking.
+
+4. Get-Process isn't sufficient for IR
+
+This is the important bit.
+
+SEC504 points out that Get-Process doesn't give investigators everything they want, particularly information such as:
+
+Parent process
+Full command-line context
+
+Those are extremely useful during investigation.
+
+So they introduce:
+
+Get-CimInstance -Class Win32_Process
+
+
+Then you can select properties such as:
+
+Get-CimInstance -Class Win32_Process |
+    Select-Object ProcessId, ProcessName, CommandLine
+
+
+Now you're getting far more useful investigation context.
+
+5. Parent-child relationships are HUGE
+
+This is probably the most important concept on these slides.
+
+You shouldn't only ask:
+
+What process is running?
+
+Also ask:
+
+Who launched it?
+
+For example:
+
+explorer.exe
+   ↓
+notepad.exe
+
+
+might be completely expected.
+
+But SEC504 gives the example:
+
+lsass.exe
+   ↓
+cmd.exe
+
+
+🚨 This parent-child relationship is abnormal enough to warrant investigation.
+
+The lesson isn't:
+
+cmd.exe = malware.
+
+cmd.exe itself is legitimate.
+
+The suspicious element is the relationship/context.
+
+GCIH mindset
+
+Legitimate process + abnormal relationship = investigate.
+
+That's a really important principle.
+
+6. Suspicious-process checklist
+
+SEC504 gives you a nice mental checklist.
+
+When you encounter a process, ask:
+
+Is it new/unrecognized?
+
+Unknown doesn't automatically mean malicious.
+
+But it deserves context.
+
+Does its name appear random?
+
+Something unusual/random-looking may warrant investigation.
+
+Again, not proof.
+
+Is it running from an unusual path?
+
+This connects directly with your recent removable-media hunt.
+
+For example:
+
+C:\Program Files\Vendor\Product.exe
+
+
+is different contextually from:
+
+E:\Product.exe
+
+
+The filename might be identical, but execution location changes your investigation.
+
+Is the parent suspicious?
+
+Example:
+
+unknown.exe
+    ↓
+powershell.exe
+
+
+potentially interesting depending on command line/context.
+
+Is the relationship abnormal?
+
+That's the lsass.exe → cmd.exe lesson.
+
+Is the process associated with other suspicious activity?
+
+For example:
+
+Unknown.exe
+     ↓
+External network connection
+
+
+Now you have multiple signals to investigate.
+
+Is there encoded command-line content?
+
+Especially PowerShell using encoded command arguments.
+
+Again:
+
+Encoded ≠ malicious
+
+Encoding is a reason to investigate, not enough by itself for a malicious verdict.
+
+7. Base64 is encoding, NOT encryption
+
+This is worth locking into your brain.
+
+Base64
+
+Transforms data into another representation.
+
+It doesn't inherently protect the content.
+
+Therefore if you encounter something like encoded PowerShell, the investigative question is:
+
+What does the decoded content actually do?
+
+SEC504 introduces CyberChef for transformations such as Base64 and URL decoding.
+
+Your mental model:
+
+Encoded PowerShell
+       ↓
+Decode
+       ↓
+Read actual behavior
+       ↓
+Determine whether activity makes sense
+
+
+This is exactly what we did when you previously showed me encoded PowerShell results.
+
+8. Network investigation
+
+Now SEC504 introduces:
+
+Get-NetTCPConnection
+
+
+This lets the investigator examine TCP connection information.
+
+Two particularly important things:
+
+Listening
+
+A process is waiting for inbound connections.
+
+Think back to Argous:
+
+Office_Remoter.exe
+TCP/4444
+LISTENING
+
+
+That would obviously become interesting.
+
+Established
+
+There is an active TCP connection.
+
+Conceptually:
+
+Unknown.exe
+       ↓
+RemoteIP:443
+       ↓
+ESTABLISHED
+
+
+Now you want to know what process owns that connection.
+
+9. OwningProcess connects network activity to processes
+
+This is the big relationship.
+
+Get-NetTCPConnection can provide an OwningProcess PID.
+
+Then that PID can be investigated as a process.
+
+Conceptually:
+
+Remote IP
+   ↓
+TCP connection
+   ↓
+OwningProcess = PID 1234
+   ↓
+What is PID 1234?
+   ↓
+Process name
+   ↓
+Command line
+   ↓
+Parent
+
+
+🔥 That is powerful IR thinking.
+
+You're constantly moving between artifacts.
+
+10. And this connects EXACTLY to your Metso observation
+
+Remember our discussion:
+
+EXE from unusual/removable-media location → unknown hash → communicates externally.
+
+SEC504 is basically giving you the host-level investigative foundation for answering that.
+
+Imagine you encounter:
+
+E:\Unknown.exe
+
+
+By itself:
+
+Interesting, but insufficient.
+
+Then:
+
+E:\Unknown.exe
+      ↓
+PID 4820
+
+
+And network evidence shows:
+
+PID 4820
+      ↓
+xxx.microsoft.com:443
+
+
+Still:
+
+Not automatically malicious.
+
+Now investigate context:
+
+Parent process
+        ↓
+Command line
+        ↓
+Executable location
+        ↓
+External destination
+        ↓
+Connection behavior
+        ↓
+Other associated processes/artifacts
+        ↓
+Environment prevalence
+
+
+Eventually multiple suspicious properties may stack together.
+
+That's far stronger than:
+
+"VirusTotal doesn't know this SHA256, therefore malware."
+
+11. One of the most important words here: PIVOT
+
+SEC504 explicitly tells you not to stop when you find something.
+
+Say you discover:
+
+suspicious.exe
+
+
+Don't just analyze that executable.
+
+It gives you new evidence:
+
+suspicious.exe
+     ↓
+SHA256
+     ↓
+Command line
+     ↓
+Parent
+     ↓
+Remote IP/domain
+     ↓
+Potential related artifacts
+
+
+Each artifact becomes another potential investigation pivot.
+
+This ties directly back to DAIR:
+
+Investigate → new IOC → scope again 🔄
+
+12. GCIH scenario thinking
+
+If the exam gives:
+
+You need to identify currently running processes.
+
+Think:
+
+Get-Process
+
+
+If it asks for more detailed Windows process information, particularly command-line/process properties:
+
+Think:
+
+Get-CimInstance -Class Win32_Process
+
+
+If it asks:
+
+Which processes have suspicious parent/child relationships?
+
+Think:
+
+ParentProcessId + ProcessId
+
+If it asks:
+
+What TCP connections/listening services currently exist?
+
+Think:
+
+Get-NetTCPConnection
+
+
+If you know a suspicious remote IP and want connections involving it:
+
+Think about filtering network connections by remote address.
+
+13. The little network-output slide
+
+There's an especially useful example in your images:
+
+192.168.171.190 → 35.204.29.97 : 443
+State: Established
+Process: chrome
+
+
+The correct analyst response isn't:
+
+"Chrome connected to the Internet. Malicious!"
+
+😄
+
+It's:
+
+Does this connection make sense for Chrome and for this system?
+
+You need context.
+
+That's the same lesson as the WordPress failed-logins example:
+
+An artifact isn't automatically a conclusion.
+14. IOC vs suspicious indicator
+
+Another thing SEC504 is reinforcing:
+
+These are reasons to investigate:
+
+Unknown process
+Random-looking process name
+Strange execution path
+Abnormal parent-child relationship
+Encoded command line
+Suspicious network destination
+
+But:
+
+None individually guarantees maliciousness.
+
+Multiple independent suspicious characteristics increase investigative confidence.
+
+Think of it like accumulating evidence.
+
+🔥 Your SEC504 Live Investigation Cheat Sheet
+PROCESS
+Get-Process
+
+
+What's running?
+
+↓
+
+MORE PROCESS CONTEXT
+Get-CimInstance -Class Win32_Process
+
+
+Process ID / command line / relationships
+
+↓
+
+NETWORK
+Get-NetTCPConnection
+
+
+Who's listening? Who's connected?
+
+↓
+
+CORRELATE
+Connection
+    ↓
+OwningProcess
+    ↓
+PID
+    ↓
+Process
+    ↓
+Command line
+    ↓
+Parent
+
+
+↓
+
+INVESTIGATE
+
+Ask:
+
+Normal or abnormal in this environment?
+
+↓
+
+PIVOT
+
+New IOC?
+
+Scope the environment again.
+
+🎯 If you remember only four things from these pages
+
+1. Don't rely only on network traffic.
+ Host evidence and network evidence complement each other.
+
+2. Parent-child relationships can be more revealing than process names.
+
+cmd.exe isn't inherently suspicious.
+
+lsass.exe → cmd.exe is a reason to investigate.
+
+3. Encoded PowerShell isn't automatically malicious.
+
+Decode it and understand what it does.
+
+4. Always pivot.
+
+Process → command line → parent → network → IOC → other systems
+
+Honestly, Dhruv, this section should be fairly natural for you because your Defender hunting already operates on the same principle. SEC504 is now teaching you the underlying live-response methodology behind many of the correlations you've been doing in KQL.
+till page 41
