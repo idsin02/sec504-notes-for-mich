@@ -1,0 +1,557 @@
+Yep. This wraps up the Windows Live Investigation portion nicely. The new concept you really need from this section is Differential Analysis. The rest is mostly consolidating the PowerShell commands you've already learned.
+
+1. Differential Analysis: the big new concept
+
+The problem is simple:
+
+A Windows machine might have:
+
+Hundreds of processes
+Hundreds of services
+Lots of scheduled tasks
+Many network connections
+Huge numbers of registry entries
+
+Looking manually at everything is inefficient.
+
+Instead, ask:
+
+What's different from what this machine is supposed to look like?
+
+That's differential analysis.
+
+Simple example
+
+When the machine was originally built:
+
+Baseline / Gold Image
+---------------------
+Service A
+Service B
+Service C
+
+
+During the incident:
+
+Current Machine
+---------------
+Service A
+Service B
+Service C
+weirdService
+
+
+Instead of reviewing every service individually, comparison immediately highlights:
+
++ weirdService
+
+
+Now you have something to investigate.
+
+2. Baseline vs current state
+
+SEC504 shows something along these lines:
+
+Get-Service > baseline-services.txt
+
+
+That's your known reference.
+
+During investigation:
+
+Get-Service > services-liveinvestigation.txt
+
+
+Load both:
+
+$baseline = Get-Content .\baseline-services.txt
+$current = Get-Content .\services-liveinvestigation.txt
+
+
+Then:
+
+Compare-Object -ReferenceObject $baseline -DifferenceObject $current
+
+
+Now PowerShell shows what's different.
+
+3. SideIndicator is the exam-worthy bit
+
+This can initially look confusing.
+
+Remember:
+
+<=   Reference / baseline side
+
+=>   Difference / current side
+
+
+The slide gives a really good memory trick:
+
+The arrow points toward the side containing that entry.
+
+So:
+
+SuspiciousService   =>
+
+
+means it's on the current/difference side.
+
+That's potentially something that appeared since the baseline.
+
+Whereas:
+
+KnownService        <=
+
+
+is on the reference/baseline side but not in the current output in the same form.
+
+🧠 Memory trick
+
+Baseline ←
+
+<=
+
+
+Current →
+
+=>
+
+
+Easy.
+
+4. Why this is powerful for IR
+
+Imagine the attacker establishes persistence using:
+
+MicrosoftUpdateManager
+
+
+The name deliberately looks legitimate.
+
+If you simply enumerate services you might see hundreds:
+
+Windows Update
+VMware Tools
+Defender
+SQL Agent
+MicrosoftUpdateManager
+...
+
+
+You might miss it.
+
+But comparison against the gold image shows:
+
+MicrosoftUpdateManager  =>
+
+
+Now you've got a lead.
+
+It's the change that's interesting, not necessarily the name.
+
+5. Differential analysis isn't just for services
+
+This is an important conceptual extension.
+
+You can use the baseline/current approach for things such as:
+
+Processes
+
+What's running now that isn't normally present?
+
+Services
+
+What services appeared/disappeared/changed?
+
+Scheduled tasks
+
+What unexpected task exists?
+
+Local accounts/groups
+
+Did an unexpected account or administrator appear?
+
+Network listeners
+
+Is an unexpected port listening?
+
+Configuration
+
+What relevant system setting changed?
+
+So the concept is broader than:
+
+Compare-Object command.
+
+The real concept is:
+
+Known-good baseline + current state → investigate meaningful differences.
+
+6. What if there is no baseline?
+
+SEC504 makes a practical point here.
+
+If you never collected baseline information, you may sometimes be able to provision a clean system from the same gold image and collect reference information from that.
+
+Conceptually:
+
+Known clean build
+        ↓
+Collect configuration
+        ↓
+Compare
+        ↓
+Compromised/suspected host
+
+
+Of course the comparison is only meaningful if the reference configuration actually represents what the investigated machine was supposed to look like.
+
+7. PowerShell vs legacy commands
+
+SEC504 also explicitly says:
+
+It's okay to use legacy Windows commands.
+
+You don't need to force PowerShell for every problem.
+
+For exam revision, this mapping is useful:
+
+Goal	PowerShell	LegacyProcesses	Get-Process	wmic.exe process
+Network connections	Get-NetTCPConnection	netstat.exe -nao
+Services	Get-Service	sc.exe query
+Registry	Get-ChildItem	reg.exe
+Local users	Get-LocalUser	net.exe user
+Local groups	Get-LocalGroup	net.exe localgroup
+Scheduled tasks	Get-ScheduledTask	schtasks.exe
+Event logs	Get-WinEvent	wevtutil.exe
+Compare data	Compare-Object	fc.exe
+Small but useful SEC504 tip
+
+When running legacy programs from PowerShell, specify .exe.
+
+For example:
+
+netstat.exe -nao
+
+
+rather than simply relying on:
+
+netstat
+
+
+This avoids confusion with PowerShell aliases with overlapping names.
+
+8. Sysinternals ⭐
+
+This part is worth remembering because these tools come up constantly in Windows investigation.
+
+Process Explorer
+
+Think:
+
+Supercharged Task Manager
+
+Detailed examination of running processes.
+
+Useful mental connection:
+
+Processes → Process Explorer
+
+Process Monitor / Procmon
+
+Think:
+
+What's happening right now?
+
+It can show activity involving areas such as:
+
+Processes
+File system
+Registry
+Network
+
+So:
+
+Process Monitor = activity over time
+
+
+while:
+
+Process Explorer = detailed process examination
+
+
+Don't confuse those two.
+
+9. TCPView
+
+This directly relates to what you just learned with:
+
+Get-NetTCPConnection
+
+
+Think:
+
+Network connection/listener → owning application/process
+
+So instead of looking only at:
+
+192.168.1.50 → 123.45.67.89:443
+
+
+you can correlate the network activity to the responsible application.
+
+10. Autoruns ⭐
+
+This one is extremely valuable for IR.
+
+Think:
+
+What is configured to start automatically?
+
+The slide describes Autoruns as providing a comprehensive view of Windows AutoStart Extensibility Points (ASEPs).
+
+The security relevance should now be obvious:
+
+Attacker wants persistence
+           ↓
+Something executes automatically
+           ↓
+Autoruns can help reveal autostart configuration
+
+
+This ties together several things you've already studied:
+
+Services
+Registry
+Scheduled execution
+Other autostart mechanisms
+11. Sysmon ⭐
+
+Sysmon is different.
+
+Think:
+
+Detailed Windows security telemetry collection
+
+The slide describes it as a service/driver that records detailed event information that becomes particularly valuable with monitoring such as a SIEM or Windows Event Collection.
+
+This is more Prepare/Detect visibility than a one-time investigation tool.
+
+And you'll immediately recognize the relevance to MDR:
+
+Endpoint activity
+       ↓
+Sysmon telemetry
+       ↓
+Central collection/SIEM
+       ↓
+Detection/Hunting
+
+12. ProcDump
+
+SEC504 describes ProcDump as a command-line utility for capturing memory from a running process for later analysis.
+
+The important thing to remember:
+
+It's dual-use.
+
+Responders may use tools like this for analysis, while threat actors may abuse legitimate administrative/debugging utilities.
+
+That reinforces another recurring SEC504 lesson:
+
+Tool name alone does not establish intent. Context and behavior matter.
+
+🔥 Now connect the WHOLE Windows Live Investigation module
+
+This is the structure I'd memorize instead of memorizing paragraphs.
+
+PROCESS
+
+What's running?
+
+Get-Process
+
+
+More details:
+
+Get-CimInstance -Class Win32_Process
+
+
+Look at:
+
+Name
+Path
+Command line
+PID
+Parent PID
+Parent/child relationships
+NETWORK
+
+Who's communicating?
+
+Get-NetTCPConnection
+
+
+Look at:
+
+Listening ports
+Established connections
+Remote IP
+Remote port
+Owning process
+Unexpected/beacon-like behavior
+SERVICES
+
+Is something persistently running?
+
+Get-Service
+
+
+More detail:
+
+Get-CimInstance -ClassName Win32_Service
+
+
+Look especially at the service executable/configuration.
+
+REGISTRY
+
+Has interesting configuration/persistence changed?
+
+Get-ChildItem
+Get-ItemProperty
+
+ACCOUNTS
+
+Did someone add or privilege an account?
+
+Get-LocalUser
+Get-LocalGroup
+Get-LocalGroupMember Administrators
+
+SCHEDULED TASKS
+
+Is something configured to execute later/automatically?
+
+Get-ScheduledTask
+Export-ScheduledTask
+Get-ScheduledTaskInfo
+
+EVENT LOGS
+
+What did Windows record?
+
+Get-WinEvent
+
+
+From the previous material, remember the example:
+
+System Event ID 7045 → service installation
+
+DIFFERENTIAL ANALYSIS
+
+What's different from our known-good state?
+
+Compare-Object
+
+
+Remember:
+
+<= Baseline/reference
+
+=> Current/difference
+
+🧠 My GCIH memory map for this entire section
+
+Don't memorize 20 commands randomly.
+
+Memorize this sequence:
+
+P N S R A T E D
+
+Process
+
+Get-Process
+
+Network
+
+Get-NetTCPConnection
+
+Services
+
+Get-Service
+
+Registry
+
+Get-ItemProperty
+
+Accounts
+
+Get-LocalUser
+
+Tasks
+
+Get-ScheduledTask
+
+Event Logs
+
+Get-WinEvent
+
+Differences
+
+Compare-Object
+
+That's essentially your Windows live-response checklist.
+
+🎯 How it applies to an actual investigation
+
+Suppose tomorrow you encounter:
+
+Unknown.exe
+→ unusual external destination
+
+
+Your SEC504 brain should now naturally expand that lead:
+
+Unknown.exe
+       ↓
+PROCESS
+Who launched it?
+Command line?
+Path?
+       ↓
+NETWORK
+Who's it talking to?
+Listening?
+Beaconing?
+       ↓
+SERVICES
+Does a service persist it?
+       ↓
+REGISTRY
+Autostart configuration?
+       ↓
+ACCOUNTS
+Unexpected users/admins?
+       ↓
+TASKS
+Scheduled execution?
+       ↓
+EVENT LOGS
+When/how did relevant changes occur?
+       ↓
+DIFFERENTIAL ANALYSIS
+What's different from known-good?
+       ↓
+NEW IOC/TTP FOUND
+       ↓
+DAIR → SCOPE AGAIN 🔄
+
+
+That's the real lesson of this module.
+
+You aren't hunting "evil.exe". You're reconstructing what changed, what executed, what communicated, how activity persisted, what accounts were involved, and how far the activity may extend.
+
+That mindset will be much more valuable for your GCIH exam, and it also maps almost perfectly to the way you're already doing Microsoft Defender XDR hunts.
+page no 70
