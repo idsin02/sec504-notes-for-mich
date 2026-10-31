@@ -1,0 +1,641 @@
+Yep, now SEC504 is expanding the Windows live investigation checklist. The important part is not memorizing every PowerShell command. You want to understand what artifact you're examining, why it matters, and how one suspicious artifact leads to another.
+
+Your investigation picture is becoming:
+
+Processes → Network → Services → Registry → Accounts → Scheduled Tasks → Event Logs → Pivot → Scope
+
+1. Understanding Get-NetTCPConnection
+
+First, let's make the confusing addresses easy.
+
+Suppose you see:
+
+LocalAddress       LocalPort    RemoteAddress    RemotePort    State
+::                 445          ::               0             Listen
+0.0.0.0            135          0.0.0.0          0             Listen
+127.0.0.1          9001         0.0.0.0          0             Listen
+192.168.171.190    139          0.0.0.0          0             Listen
+192.168.171.190    1088         20.96.63.25       443           Established
+
+
+Here's how you should read it.
+
+::
+:: :445
+
+
+Means:
+
+Listening on TCP/445 on all IPv6 interfaces.
+
+0.0.0.0
+0.0.0.0:135
+
+
+Means:
+
+Listening on TCP/135 on all IPv4 interfaces.
+
+So this can potentially accept connections through multiple IPv4 network interfaces, subject to controls such as the host firewall.
+
+127.0.0.1
+127.0.0.1:9001
+
+
+Means:
+
+Listening on TCP/9001, but only through the local IPv4 loopback interface.
+
+So another computer cannot simply connect to that listener through the network interface.
+
+This is an important IR distinction:
+
+Listening ≠ necessarily remotely exposed.
+
+Specific local IP
+192.168.171.190:139
+
+
+means the service is bound to that particular local IP/interface rather than every IPv4 interface.
+
+2. Listen vs Established vs TimeWait
+Listen
+
+Think:
+
+Waiting for somebody to connect.
+
+For example, from the earlier Argous scenario:
+
+Office_Remoter.exe
+TCP/4444
+LISTEN
+
+
+🚨 That became interesting because the responder didn't expect that service.
+
+Established
+
+Think:
+
+An active TCP session exists between the local and remote endpoints.
+
+Example:
+
+192.168.171.190:1088
+        ↕
+20.96.63.25:443
+
+Established
+
+
+Now your investigative question becomes:
+
+Which process owns this connection?
+
+TimeWait
+
+Think:
+
+The TCP connection is closing/has recently closed and Windows is temporarily retaining connection state.
+
+For GCIH purposes, the main distinction here is:
+
+Listen = waiting
+
+Established = active connection
+
+TimeWait = closing/cleanup state
+
+3. How do I recognize suspicious network connections?
+
+SEC504 makes an important point:
+
+There is no magical list of “malicious network traffic.”
+
+Context matters.
+
+Process doesn't normally perform network activity
+
+The material gives a great example:
+
+notepad.exe
+    ↓
+multiple HTTP connections
+
+
+Notepad suddenly making repeated network connections?
+
+🤨 Investigate.
+
+But:
+
+chrome.exe → TCP/443
+
+
+That's much less surprising by itself.
+
+Abnormal for the environment
+
+For example:
+
+Unexpected activity during off-hours
+Unusually long HTTP/HTTPS sessions
+Regular small outbound connections
+Beacon-like behavior
+
+That last one is important.
+
+Beaconing
+
+Conceptually:
+
+Host → external server
+         60 sec
+Host → external server
+         60 sec
+Host → external server
+         60 sec
+Host → external server
+
+
+Small, repeated outbound communication at a roughly regular cadence can warrant C2 investigation.
+
+And this connects strongly to the questions you asked earlier about the Metso executables.
+
+An EXE making one HTTPS connection isn't automatically C2.
+
+An unusual EXE from an unusual location repeatedly communicating externally in an unexplained pattern gives you substantially more reason to investigate.
+
+4. Technique-specific network behavior
+
+Sometimes the attack technique itself tells you what network behavior should exist.
+
+For example, if you're investigating certain SMB-based lateral movement activity, internal connections involving ports such as 445 become relevant evidence.
+
+So instead of:
+
+“Is TCP/445 bad?”
+
+you think:
+
+“Does this TCP/445 connection make sense given the process, source host, destination host, account, timing, and technique I'm investigating?”
+
+That's threat-hunter thinking.
+
+5. SERVICES
+
+Next artifact:
+
+Get-Service
+
+
+Why do we care?
+
+Because Windows services can start automatically and therefore can be used as persistence.
+
+The basic question becomes:
+
+Is there a service here that shouldn't exist?
+
+Get-Service provides useful basic data, but SEC504 points you again toward CIM for more detail:
+
+Get-CimInstance -ClassName Win32_Service
+
+
+Now you're interested in properties such as:
+
+Name
+Caption
+Description
+PathName
+
+And this is where investigation becomes interesting.
+
+Imagine something presents itself as a normal-looking service, but its path is:
+
+C:\Windows\Temp\xEXk.exe
+
+
+That's a reason to investigate the service more deeply.
+
+Don't only trust the service name.
+
+Look at:
+
+Service name + executable path + startup behavior + signer/hash + surrounding evidence
+
+6. Registry investigation
+
+This will become very useful later in Windows IR.
+
+Think of the Windows Registry roughly as a hierarchical database/configuration store that PowerShell can navigate in a filesystem-like way.
+
+You'll commonly see locations such as:
+
+HKLM:
+
+
+and
+
+HKCU:
+
+
+SEC504 shows:
+
+Get-ChildItem
+
+
+for looking through registry keys.
+
+Then:
+
+Get-ItemProperty
+
+
+for retrieving the values stored within a key.
+
+Why does this matter for security?
+
+Because some registry locations can control behavior such as automatic execution.
+
+The example shows:
+
+HKLM:\Software\Microsoft\Windows\CurrentVersion\Run
+
+
+So if something suspicious has appeared there:
+
+UnknownUpdater
+→ C:\Users\Public\weird.exe
+
+
+your immediate question is:
+
+Why is this configured to execute automatically?
+
+It can potentially be a persistence indicator.
+
+Again:
+
+Registry entry alone ≠ malware.
+
+Context matters.
+
+7. Local accounts
+
+This one is super straightforward.
+
+Attackers may establish access by creating accounts or adding accounts to privileged groups.
+
+Useful commands introduced here:
+
+Get-LocalUser
+
+
+What local users exist?
+
+Then filter enabled accounts:
+
+Get-LocalUser | Where-Object {$_.Enabled -eq $True}
+
+
+And:
+
+Get-LocalGroupMember Administrators
+
+
+Now you're asking:
+
+Who has local Administrator privileges?
+
+Why is this powerful?
+
+Imagine baseline says:
+
+Administrator
+ITSupport
+
+
+but during IR you discover:
+
+Administrator
+ITSupport
+svc_backup2
+
+
+You don't immediately declare:
+
+"svc_backup2 is malicious."
+
+Instead:
+
+Is this account authorized? When was it created? What has it done? Why is it an Administrator?
+
+That's another pivot.
+
+8. Scheduled Tasks
+
+Another major Windows persistence location.
+
+SEC504 introduces:
+
+Get-ScheduledTask
+
+
+Why?
+
+Because a scheduled task can execute something:
+
+At a particular time
+Periodically
+In response to certain triggers/events
+
+So an attacker can potentially use scheduled execution for persistence.
+
+The really important investigative point
+
+A task might have a convincing name.
+
+For example:
+
+AvastUpdate
+
+
+Sounds legitimate.
+
+But if the actual action launches something unexpected, such as hidden PowerShell contacting an untrusted location, the name becomes irrelevant.
+
+🔥 Again, behavior > name.
+
+That's a recurring SEC504 lesson.
+
+To inspect more detail, the material introduces:
+
+Export-ScheduledTask
+
+
+And for execution information:
+
+Get-ScheduledTaskInfo
+
+
+including things such as last/next execution information.
+
+So your investigative chain becomes:
+
+Suspicious scheduled task
+        ↓
+What does it execute?
+        ↓
+Arguments?
+        ↓
+When did it last run?
+        ↓
+What process/network activity occurred around then?
+
+
+That's another powerful pivot.
+
+9. Windows Event Logs
+
+Now we're getting into another hugely important IR source.
+
+SEC504 introduces:
+
+Get-WinEvent
+
+
+Think:
+
+Search Windows event records for evidence surrounding an incident.
+
+You can restrict by:
+
+Log
+Time
+Event ID
+Event ID 7045
+
+This one is worth remembering from the example.
+
+The material investigates:
+
+System Event Log → 7045 → new service installed
+
+Now connect that to the previous topic.
+
+We found a suspicious service.
+
+Instead of just saying:
+
+“Weird service.”
+
+you can ask:
+
+When/how was a service installation recorded?
+
+And correlate the relevant Windows event.
+
+This is exactly what pivoting looks like.
+
+🔥 10. See how everything is coming together?
+
+Suppose during a fictional investigation you discover:
+
+Suspicious outbound network connection
+
+
+⬇️
+
+Find owning PID.
+
+⬇️
+
+weird.exe
+
+
+⬇️
+
+Inspect process:
+
+Parent → powershell.exe
+
+
+⬇️
+
+Check persistence:
+
+Suspicious Windows service
+
+
+⬇️
+
+Check service configuration:
+
+PathName → C:\Windows\Temp\weird.exe
+
+
+⬇️
+
+Check event logs:
+
+7045 → service installed
+
+
+⬇️
+
+Check other persistence locations:
+
+Registry
+Scheduled Tasks
+Accounts
+
+
+⬇️
+
+Find additional IOC.
+
+⬇️
+
+SCOPE AGAIN 🔄
+
+Now DAIR suddenly makes more sense, right?
+
+The PowerShell section isn't separate from DAIR.
+
+It's showing you how an analyst obtains the evidence needed to perform Scope/Contain/Eradicate.
+
+11. The investigation methodology I want you to remember
+
+Don't memorize 50 commands independently.
+
+Remember the questions.
+
+Processes
+
+What's running?
+
+Get-Process
+Get-CimInstance -Class Win32_Process
+
+Network
+
+Who's communicating/listening?
+
+Get-NetTCPConnection
+
+Services
+
+What's persistently running in the background?
+
+Get-Service
+Get-CimInstance -ClassName Win32_Service
+
+Registry
+
+What interesting configuration/persistence-related entries exist?
+
+Get-ChildItem
+Get-ItemProperty
+
+Accounts
+
+Who's on this machine and who has privilege?
+
+Get-LocalUser
+Get-LocalGroupMember Administrators
+
+Scheduled Tasks
+
+What's configured to execute automatically/on a trigger?
+
+Get-ScheduledTask
+Get-ScheduledTaskInfo
+Export-ScheduledTask
+
+Event Logs
+
+What evidence did Windows record?
+
+Get-WinEvent
+
+🧠 12. GCIH high-value memory points
+
+I'd memorize these:
+
+Network addresses
+0.0.0.0 → all IPv4 interfaces
+
+:: → all IPv6 interfaces
+
+127.0.0.1 → IPv4 loopback/local machine
+
+TCP states
+Listen → waiting for connection
+
+Established → active connection
+
+TimeWait → connection closing/recently closed
+
+Services
+
+Suspicious service → inspect executable PathName.
+
+Registry
+Get-ChildItem
+→ enumerate keys
+
+Get-ItemProperty
+→ examine values
+
+Local accounts
+Get-LocalUser
+Get-LocalGroupMember Administrators
+
+Scheduled tasks
+Get-ScheduledTask
+→ identify task
+
+Export-ScheduledTask
+→ inspect detailed definition/action
+
+Get-ScheduledTaskInfo
+→ execution information
+
+Event logs
+Get-WinEvent
+
+
+And from this section:
+
+7045 → newly installed Windows service
+
+🎯 The bigger SEC504 lesson
+
+Don't think:
+
+“I found evil.exe, therefore investigation done.”
+
+Think:
+
+What launched it?
+
+Where is it running from?
+
+Who is it communicating with?
+
+Is it listening?
+
+What persists it?
+
+Did someone create a service/task/account?
+
+What do the event logs show?
+
+Where else does this IOC/TTP exist?
+
+That last question sends you right back to DAIR → Scope 🔄.
+
+And honestly, this is exactly why tomorrow's Metso hunt will make more sense. Instead of looking at those unknown-hash executables individually, you've now got the SEC504 mental framework to correlate process + parent + path + network + persistence + account + event evidence, before deciding whether something is benign, suspicious, or potentially malicious.
+pg 62
