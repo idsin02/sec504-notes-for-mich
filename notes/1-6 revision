@@ -1,0 +1,1107 @@
+Revision so far:
+Absolutely 😄 Let’s do a proper GCIH/SEC504 revision of everything we’ve covered so far, but focus on what you should actually remember rather than rereading all the pages.
+
+🧠 SEC504 Revision: What we've covered so far
+PART 1: Argous / Green Penguin Attack
+
+This scenario taught us to think about an incident as an entire attack chain, not just the thing that generated the alert.
+
+Attack flow
+
+Recon → Vulnerable CRM → Exploitation → Pivot → Internal Recon → Credentials → Lateral Movement → Domain Compromise → Persistence → C2
+
+What happened?
+
+Green Penguin:
+
+Scanned Argous externally.
+Found the public CRM.
+Found SSRF + command injection.
+Used command injection to execute commands.
+Installed Office_Remoter.exe.
+Office_Remoter.exe listened on TCP/4444 and provided a way to pivot toward the internal network.
+Attacker performed internal reconnaissance.
+CRM password hashes were obtained/cracked.
+Users had reused CRM passwords for domain credentials.
+A database administrator account provided access to the database server.
+AssetMgtAcct credentials were compromised and reused across systems.
+Attacker expanded access and eventually reached the Domain Controller.
+Additional malware/persistence existed elsewhere.
+Office_Techneter.exe communicated using Microsoft TechNet infrastructure as C2.
+Responders killed two processes on the CRM and thought the problem was solved.
+BIG lesson
+
+The system that triggered the alert may only be one visible part of a much larger compromise.
+
+Killing:
+
+Office_Remoter.exe
+Office_Techneter.exe
+
+
+didn't establish that the attacker was gone.
+
+The responders failed to properly scope the incident.
+
+PART 2: PICERL
+
+Classic incident response:
+
+P I C E R L
+
+Preparation
+ Identification
+ Containment
+ Eradication
+ Recovery
+ Lessons Learned
+
+Easy meanings
+
+Preparation
+
+Get ready before incidents happen.
+
+Policies, logging, monitoring, backups, training, recovery procedures.
+
+Identification
+
+Detect that something potentially bad happened.
+
+Containment
+
+🛑 Stop/limit the attack.
+
+Eradication
+
+🧹 Remove the attacker/artifacts and undo malicious changes.
+
+Recovery
+
+🟢 Safely return systems/business operations to normal and address the conditions that contributed to the incident.
+
+Lessons Learned
+
+What happened? What worked? What failed? What should change?
+
+PART 3: Why linear incident response isn't enough
+
+Real incidents don't neatly work like:
+
+Detect
+ ↓
+Contain
+ ↓
+Eradicate
+ ↓
+Recover
+ ↓
+DONE
+
+
+Imagine we're eradicating malware and suddenly discover:
+
+new-c2-domain.com
+
+
+That changes our understanding.
+
+We must ask:
+
+What other machines contacted this domain?
+
+So we go back to:
+
+SCOPE
+
+That is why SEC504 introduces the Dynamic Approach to Incident Response, DAIR.
+
+PART 4: DAIR ⭐⭐⭐
+
+This is important.
+
+Think:
+
+Prepare → Detect → Verify/Triage → 🔄 Scope → Contain → Eradicate → Recover 🔄 → Debrief
+
+The core response loop is:
+
+SCER
+
+Scope
+ Contain
+ Eradicate
+ Recover
+
+🔄 Repeat as new evidence appears.
+
+PREPARE
+
+SEC504's phrase:
+
+Know thy organization.
+
+You need to understand:
+
+Business-critical systems
+Policies
+Normal environment behavior
+Logging
+Internal visibility
+Backups
+Recovery procedures
+Testing procedures
+IR-team readiness
+
+Important principle:
+
+Collecting logs is pointless if nobody or nothing reviews them.
+
+PART 5: Detect
+
+This introduced two important terms.
+
+IOA: Indicator of Attack
+
+Evidence suggesting attack activity or attempted attack activity.
+
+Examples:
+
+Suspicious login attempts
+Exploitation evidence
+Malicious attachment
+
+The attack doesn't necessarily need to succeed.
+
+EOI: Event of Interest
+
+Something that rises to the organization's threshold for investigation/response.
+
+Easy difference:
+
+IOA = attack-related behavior
+
+EOI = organization considers this event important enough to investigate
+
+PART 6: Passive vs Active Detection
+Passive
+
+Something brings the incident to you:
+
+Alert
+User report
+Sysadmin observation
+Helpdesk report
+Active
+
+You deliberately search for threats.
+
+That's:
+
+🔎 Threat Hunting
+
+This is basically your normal work.
+
+You're not waiting for:
+
+"Malware detected!"
+
+You're asking:
+
+"Is there evidence of this behavior anywhere in our environment?"
+
+PART 7: MTTD vs MTTR
+MTTD
+
+Mean Time To Detect
+
+Incident starts
+      ↓
+    time
+      ↓
+Detection
+
+
+Threat hunting aims to help reduce this.
+
+MTTR
+
+Mean Time To Response
+
+For this SEC504 section, remember it as the time from detecting the incident until the response/remediation objective is reached.
+
+Memory trick:
+
+D → Detect
+
+MTTD
+
+R → Respond
+
+MTTR
+
+PART 8: Verify + Triage
+
+After detecting something, don't immediately scream:
+
+BREACH!!! 🚨
+
+First:
+
+Verify
+
+Is this actually an incident/EOI?
+
+Then:
+
+Triage
+
+What's the priority and who/resources need to be involved?
+
+Context matters.
+
+PART 9: The WordPress example
+
+We saw multiple failed logins from different IPs.
+
+Question:
+
+Malicious or benign?
+
+Correct thinking:
+
+Unknown from that small amount of data.
+
+We need baseline/context.
+
+Ask:
+
+Is this normal?
+How much traffic normally occurs?
+Is the server Internet-facing?
+Are failed logins common?
+Were failures followed by a successful login?
+Were sensitive accounts targeted?
+
+Major lesson:
+
+Suspicious artifact ≠ malicious conclusion.
+
+You already apply this principle when we write your hunt findings.
+
+PART 10: Scope ⭐⭐⭐
+
+One of the biggest things from this section.
+
+Scope asks:
+
+How far does this incident extend?
+
+Suppose we verify:
+
+evil.exe
+SHA256 = ABC
+RemoteIP = X.X.X.X
+
+
+Now investigate:
+
+SHA256
+ ↓
+Which other systems?
+
+IP
+ ↓
+Which other systems?
+
+Filename
+ ↓
+Which other systems?
+
+Account
+ ↓
+What else did it access/do?
+
+Behavior
+ ↓
+Where else does the same technique appear?
+
+
+That's scoping.
+
+PART 11: Contain vs Eradicate vs Recover
+
+You NEED to separate these.
+
+CONTAIN
+
+🛑 STOP
+
+Limit the attacker's ability to continue.
+
+Potential actions can include isolation and access restrictions.
+
+ERADICATE
+
+🧹 REMOVE
+
+Remove malicious artifacts/persistence and undo attacker changes.
+
+RECOVER
+
+🟢 RESTORE + REMEDIATE
+
+Return the environment to safe operation, test it, address underlying problems, and monitor.
+
+Easy memory:
+
+Contain = Stop
+
+Eradicate = Remove
+
+Recover = Restore
+
+PART 12: Root Cause Analysis
+
+Don't stop with:
+
+"The password was weak."
+
+Ask:
+
+Why was a weak password allowed?
+
+Was the policy inadequate?
+
+Was enforcement inadequate?
+
+Was auditing insufficient?
+
+Were warning signs missed?
+
+That's real root-cause analysis.
+
+SEC504 also emphasizes analyzing the controls and process failures, rather than simply blaming the person involved.
+
+PART 13: Debrief
+
+After incident response:
+
+What happened?
+What went well?
+What went badly?
+What changed?
+What should improve?
+
+And an important reporting principle:
+
+FACT ≠ CONJECTURE
+
+If you can prove something, state it as fact.
+
+If you cannot, qualify it.
+
+That's exactly why in your hunt reports we've been preferring:
+
+“requires validation for potential C2 activity”
+
+rather than:
+
+“confirmed C2”
+
+when the evidence doesn't support confirmation.
+
+PART 14: Windows Live Investigation
+
+Now SEC504 switched from methodology to:
+
+Okay, a machine might be compromised. How do we investigate it?
+
+The major areas we've studied:
+
+P N S R A T E D
+
+Use that as your memory trick.
+
+Processes
+ Network
+ Services
+ Registry
+ Accounts
+ Tasks
+ Event logs
+ Differences
+
+PART 15: Processes
+
+Basic:
+
+Get-Process
+
+
+Shows running processes.
+
+More information:
+
+Get-Process 'powershell' | Select-Object *
+
+
+But Get-Process doesn't expose everything investigators want.
+
+So SEC504 introduced:
+
+Get-CimInstance -Class Win32_Process
+
+
+Useful for details including:
+
+PID
+Command line
+Parent process relationship
+PART 16: Parent-child relationships ⭐
+
+Very important.
+
+Don't simply ask:
+
+What process is this?
+
+Ask:
+
+Who launched it?
+
+For example:
+
+lsass.exe
+   ↓
+cmd.exe
+
+
+is abnormal and deserves investigation.
+
+Notice:
+
+cmd.exe itself is legitimate.
+
+The relationship/context creates the suspicion.
+
+Same concept applies to things such as PowerShell.
+
+PART 17: Suspicious process characteristics
+
+Investigate when you see combinations such as:
+
+Unknown/new process
+Random-looking name
+Non-standard path
+Suspicious parent
+Strange parent-child relationship
+Suspicious network activity
+Encoded command line
+
+But remember:
+
+Suspicious ≠ confirmed malicious
+
+You still investigate.
+
+PART 18: Base64 / encoded PowerShell
+
+Attackers may use encoded commands to make command lines less immediately readable.
+
+Important:
+
+Base64 is encoding, not encryption.
+
+Your job:
+
+Encoded command
+       ↓
+Decode
+       ↓
+Understand actual content
+
+
+SEC504 introduced CyberChef as a useful transformation/decoding tool.
+
+And again:
+
+-EncodedCommand ≠ automatically malicious.
+
+It warrants investigation.
+
+PART 19: Network investigation
+
+Main command:
+
+Get-NetTCPConnection
+
+
+Shows things such as:
+
+Local address
+Local port
+Remote address
+Remote port
+State
+Owning process
+PART 20: Know these addresses ⭐
+0.0.0.0
+
+All IPv4 interfaces.
+
+::
+
+All IPv6 interfaces.
+
+127.0.0.1
+
+IPv4 loopback/local machine.
+
+So:
+
+127.0.0.1:9001
+
+
+means the service is bound locally rather than exposed directly through the machine's external network interface.
+
+PART 21: TCP states
+
+Remember:
+
+Listen
+
+Waiting for a connection.
+
+Established
+
+Active TCP connection exists.
+
+TimeWait
+
+Connection is in closing/recently closed state.
+
+PART 22: Suspicious networking
+
+Things to investigate:
+
+Abnormal for process
+
+Example:
+
+notepad.exe → repeated web connections
+
+
+Weird.
+
+Abnormal for environment
+
+For example:
+
+Strange off-hours activity
+Persistent/long-running sessions
+Unusual destinations
+Beaconing
+
+Something roughly like:
+
+Host → Server
+   wait
+Host → Server
+   wait
+Host → Server
+   wait
+Host → Server
+
+
+Regular small outbound communication can warrant C2 investigation.
+
+But:
+
+Beacon-looking activity alone doesn't prove C2.
+
+PART 23: Services
+
+Basic:
+
+Get-Service
+
+
+More detail:
+
+Get-CimInstance -ClassName Win32_Service
+
+
+Why services matter:
+
+Persistence
+
+Attackers can potentially establish services that survive reboot/start automatically.
+
+Look particularly at:
+
+Service name
+Description
+Executable path
+Related configuration/context
+
+A legitimate-looking service name with an unexpected executable path deserves investigation.
+
+PART 24: Registry
+
+PowerShell treats registry locations somewhat like filesystem locations.
+
+Common roots include:
+
+HKLM:
+HKCU:
+
+Enumerate keys
+Get-ChildItem
+
+Retrieve values
+Get-ItemProperty
+
+
+A key example we discussed:
+
+HKLM:\Software\Microsoft\Windows\CurrentVersion\Run
+
+
+because it can contain programs configured to execute automatically.
+
+PART 25: Accounts
+
+List local users:
+
+Get-LocalUser
+
+
+List groups:
+
+Get-LocalGroup
+
+
+Check Administrators:
+
+Get-LocalGroupMember Administrators
+
+
+You're looking for things like:
+
+Unexpected account with Administrator membership.
+
+Again:
+
+Unexpected → investigate
+
+not automatically malicious.
+
+PART 26: Scheduled Tasks
+
+Main command:
+
+Get-ScheduledTask
+
+
+A scheduled task can cause execution based on a schedule/trigger and can therefore be relevant to persistence.
+
+For more detail:
+
+Export-ScheduledTask
+
+
+For runtime/status information:
+
+Get-ScheduledTaskInfo
+
+
+You may want to know:
+
+What does it execute?
+Arguments?
+When did it last run?
+What's its current status?
+Big lesson:
+
+Don't trust:
+
+TaskName = AvastUpdate
+
+
+just because the name sounds legitimate.
+
+Investigate what it actually executes.
+
+PART 27: Event Logs
+
+Main command:
+
+Get-WinEvent
+
+
+You can filter by:
+
+Log name
+Date/time
+Event ID
+
+Important example from this section:
+
+Event ID 7045
+
+Associated in this investigation example with:
+
+A service being installed.
+
+Think:
+
+Suspicious service
+       ↓
+7045
+       ↓
+When was the service installed?
+       ↓
+Correlate further activity
+
+PART 28: Differential Analysis ⭐⭐⭐
+
+Huge concept from the latest section.
+
+Instead of manually asking:
+
+Which of these 300 services looks strange?
+
+Compare:
+
+KNOWN GOOD BASELINE
+       VS
+CURRENT MACHINE
+
+
+Then investigate:
+
+What's different?
+
+PowerShell:
+
+Compare-Object
+
+SideIndicator
+
+Remember this:
+
+Reference/Baseline
+<=
+
+Difference/Current
+=>
+
+
+Easy trick:
+
+Baseline ←
+Current →
+
+PART 29: Why baselines are powerful
+
+Suppose an attacker adds:
+
+WindowsSecurityUpdater
+
+
+Could easily blend into hundreds of services.
+
+But:
+
+Gold Image
+       VS
+Current Machine
+
+
+shows:
+
+WindowsSecurityUpdater   =>
+
+
+Now you know:
+
+This wasn't in the baseline.
+
+Investigate it.
+
+PART 30: Sysinternals
+
+Know the major ones.
+
+Process Explorer
+
+Detailed running-process information.
+
+Think:
+
+Super Task Manager
+
+Process Monitor
+
+Real-time activity involving processes, files, registry, network, etc.
+
+Think:
+
+What's happening right now?
+
+TCPView
+
+TCP/UDP connections + associated processes.
+
+Think:
+
+Who's talking to whom?
+
+Autoruns ⭐
+
+Shows many Windows autostart locations.
+
+Think:
+
+Persistence / what starts automatically?
+
+Sysmon ⭐
+
+Generates detailed system telemetry/events useful for monitoring and analysis.
+
+Think:
+
+Endpoint visibility → logs → SIEM/hunting
+
+ProcDump
+
+Capture memory from a process for analysis.
+
+Also remember:
+
+Legitimate security/admin utilities may also be abused by attackers.
+
+So once again:
+
+Tool ≠ intent
+
+Behavior + context matter.
+
+🔥 THE WHOLE COURSE SO FAR IN ONE ATTACK
+
+Imagine Defender says:
+
+D:\Unknown.exe
+
+
+Don't immediately say malware.
+
+PROCESS
+
+Who executed it? What's the command line?
+
+↓
+
+PARENT
+
+What launched it?
+
+↓
+
+NETWORK
+Unknown.exe → suspicious.example:443
+
+
+Why is it communicating there?
+
+↓
+
+NETWORK BEHAVIOR
+
+Repeated/beacon-like?
+
+↓
+
+SERVICE
+
+Did something install it as a service?
+
+↓
+
+REGISTRY
+
+Any related autostart entry?
+
+↓
+
+ACCOUNT
+
+Was an unexpected account created or privileged?
+
+↓
+
+SCHEDULED TASK
+
+Did it establish scheduled execution?
+
+↓
+
+EVENT LOGS
+
+When did relevant events occur?
+
+↓
+
+BASELINE
+
+What's changed compared with known-good?
+
+↓
+
+NEW IOC/TTP
+
+Maybe you discover another hash/domain/account.
+
+↓
+
+🔄 DAIR says: SCOPE AGAIN
+
+Search the environment for that new evidence.
+
+That's basically how everything we've covered fits together.
+
+🎯 Top things I'd expect you to know cold
+
+If I were checking your SEC504 knowledge right now, these are the ones I'd want instant answers for:
+
+1.
+
+PICERL
+
+Preparation → Identification → Containment → Eradication → Recovery → Lessons Learned
+
+2.
+
+DAIR
+
+Prepare → Detect → Verify/Triage → 🔄 Scope → Contain → Eradicate → Recover → Debrief
+
+3.
+
+Contain vs Eradicate
+
+Stop vs Remove
+
+4.
+
+IOA vs EOI
+
+Attack-related activity vs organization-interest/action threshold
+
+5.
+
+MTTD vs MTTR
+
+Start → Detect vs Detect → Response
+
+6.
+
+Why scope?
+
+Find the full breadth of compromise, not merely the machine that initially alerted.
+
+7.
+
+Get-Process
+
+Running processes.
+
+8.
+
+Get-CimInstance -Class Win32_Process
+
+More detailed process information useful for investigation.
+
+9.
+
+Get-NetTCPConnection
+
+TCP connections/listeners.
+
+10.
+
+0.0.0.0 / :: / 127.0.0.1
+
+All IPv4 / all IPv6 / IPv4 loopback.
+
+11.
+
+Get-Service
+
+Services.
+
+12.
+
+Get-ItemProperty
+
+Registry values.
+
+13.
+
+Get-LocalUser
+
+Local users.
+
+14.
+
+Get-ScheduledTask
+
+Scheduled tasks.
+
+15.
+
+Get-WinEvent
+
+Windows Event Logs.
+
+16.
+
+7045
+
+Service installation in the example we studied.
+
+17.
+
+Compare-Object
+
+Differential analysis.
+
+18.
+
+=>
+
+Current/difference object.
+
+19.
+
+<=
+
+Reference/baseline object.
+
+20.
+
+Golden rule
+
+One suspicious artifact is a lead, not necessarily a conclusion. Correlate evidence, pivot, and scope.
+
+That #20 honestly ties together almost everything we've learned so far.
+
+GCIH memory trick
+
+Explorer = SEE the process
+ Monitor = WATCH the process
+ TCPView = CONNECTIONS
+ Autoruns = PERSISTENCE/autostart
+ Sysmon = LOG activity
+ ProcDump = DUMP memory
