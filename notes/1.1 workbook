@@ -1,0 +1,1197 @@
+workbook 1
+Yep 😄 This is Lab 1.1 putting everything we just learned into practice. Up to where you stopped, the lab has four important parts:
+
+Process → Network → Registry persistence → Differential analysis
+
+Let's walk through exactly what happened and why.
+
+1. Lab goal
+
+You're given a Windows 10 VM that has intentionally suspicious/malware-like artifacts.
+
+The objective is to use PowerShell live investigation to answer:
+
+What looks abnormal on this currently running Windows system?
+
+The lab also reinforces why having a known-good baseline is valuable.
+
+2. Start elevated PowerShell
+
+The lab tells you to open PowerShell as Administrator because some investigation commands require elevated privileges.
+
+Then:
+
+cd C:\Tools\LiveInvestigation
+
+
+The lab's setup script prepares its intentionally modified environment:
+
+.\live-investigation-setup.ps1
+
+
+From there, investigation starts.
+
+3. Process enumeration
+
+First question:
+
+What is currently running?
+
+Command:
+
+Get-Process
+
+
+You see fields such as:
+
+Id = Process ID / PID
+ProcessName
+CPU time
+Memory-related information
+Handles
+Session ID
+
+You can investigate a specific process:
+
+Get-Process lsass
+
+
+And get far more properties:
+
+Get-Process lsass | Select-Object -Property *
+
+GCIH takeaway
+Get-Process
+
+
+= What's running?
+
+4. Filtering process information
+
+Instead of drowning in information, the lab narrows to useful properties:
+
+Get-Process |
+Select-Object -Property Path,Name,Id
+
+
+Then filtering starts.
+
+Example:
+
+Get-Process |
+Select-Object -Property Path,Name,Id |
+Where-Object -Property Name -eq explorer
+
+
+That means:
+
+Show only the process whose name equals explorer.
+
+Then the interesting hunt
+
+The lab looks for processes executing from a path containing temp:
+
+Get-Process |
+Select-Object -Property Path,Name,Id |
+Where-Object -Property Path -Like "*temp*"
+
+
+And it finds:
+
+C:\Users\Sec504\AppData\Local\Temp\calcache.exe
+
+
+Process:
+
+calcache
+
+
+PID in the example:
+
+6896
+
+Is calcache.exe automatically malware?
+
+No.
+
+This is exactly the lesson we've been discussing.
+
+The unusual path makes it suspicious enough to investigate further.
+
+5. Network investigation
+
+Now we pivot:
+
+Is this suspicious process doing anything on the network?
+
+Command:
+
+Get-NetTCPConnection
+
+
+Rather than displaying everything:
+
+Get-NetTCPConnection |
+Select-Object -Property LocalAddress,LocalPort,State,OwningProcess
+
+
+The lab finds an unusual listener:
+
+0.0.0.0 : 4444
+State: Listen
+PID: 6896
+
+
+Remember:
+
+0.0.0.0
+
+All IPv4 interfaces.
+
+Listen
+
+Waiting for incoming TCP connections.
+
+And TCP/4444 catches the investigator's attention in this lab.
+
+6. Network PID → process
+
+Here's the important pivot.
+
+Network evidence gives:
+
+OwningProcess = 6896
+
+
+So now you ask:
+
+Who is PID 6896?
+
+Get-Process |
+Select-Object -Property Path,Name,Id |
+Where-Object -Property Id -eq 6896
+
+
+And boom:
+
+calcache.exe
+PID 6896
+
+
+So you've correlated:
+
+Temp directory
+      ↓
+calcache.exe
+      ↓
+PID 6896
+      ↓
+TCP/4444
+      ↓
+LISTEN
+
+
+🔥 That's much stronger evidence than simply saying "we found an unknown EXE."
+
+This is exactly the correlation mindset we've been talking about.
+
+7. The lab terminates calcache
+
+The lab extends the pipeline with:
+
+Stop-Process
+
+
+Then verifies:
+
+Get-Process calcache
+
+
+If PowerShell reports that it cannot find calcache, the running process is gone.
+
+But now comes the important IR question:
+
+How did calcache.exe get launched?
+
+Killing a process doesn't answer that.
+
+So the investigation moves toward persistence.
+
+8. Registry AutoStart Extensibility Points
+
+Windows provides several places that can automatically launch programs.
+
+The lab focuses on four Run/RunOnce locations:
+
+HKLM\Software\Microsoft\Windows\CurrentVersion\Run
+
+HKLM\Software\Microsoft\Windows\CurrentVersion\RunOnce
+
+HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+
+HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce
+
+Easy distinction
+
+HKLM
+
+Machine-wide configuration
+
+HKCU
+
+Current user's configuration
+
+And:
+
+Run / RunOnce
+
+Locations worth examining for automatic execution behavior.
+
+9. Get-ChildItem vs Get-ItemProperty
+
+Remember our previous discussion?
+
+Here's the lab applying it.
+
+Get-ChildItem HKCU:
+
+
+helps enumerate registry keys.
+
+But to examine values inside a specific registry key:
+
+Get-ItemProperty
+
+
+For example:
+
+Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+And the lab discovers:
+
+Calcache
+→ C:\Users\Sec504\AppData\Local\Temp\calcache.exe
+
+
+🔥 Now things are fitting together.
+
+calcache.exe
+    ↓
+Temp directory
+    ↓
+TCP/4444 listener
+    ↓
+Run registry entry
+
+
+That Run entry explains how the process can be started automatically for that user.
+
+10. Removing that persistence in the lab
+
+The lab removes the Calcache value:
+
+Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Calcache"
+
+
+Then verifies the value no longer exists.
+
+The executable itself is then removed as part of the lab cleanup:
+
+Remove-Item $env:temp\calcache.exe
+
+
+Notice the workflow:
+
+Stop process → remove autostart entry → remove executable
+
+Not simply:
+
+Stop-Process → done.
+
+That connects beautifully to the earlier eradication lesson.
+
+11. Differential Analysis begins ⭐
+
+Now SEC504 says:
+
+We can't manually recognize every malicious change.
+
+So compare:
+
+Known-good system state
+
+versus
+
+Current state
+
+The lab already provides three baseline files:
+
+baseline\services.txt
+baseline\scheduledtasks.txt
+baseline\localusers.txt
+
+
+You can see them with:
+
+Get-ChildItem baseline
+
+
+They represent reference data for:
+
+Services
+Scheduled tasks
+Local users
+12. Creating the current-state files
+
+The lab collects the same information from the machine now.
+
+Services
+Get-Service |
+Select-Object -ExpandProperty Name |
+Out-File services.txt
+
+Scheduled tasks
+Get-ScheduledTask |
+Select-Object -ExpandProperty TaskName |
+Out-File scheduledtasks.txt
+
+Local users
+Get-LocalUser |
+Select-Object -ExpandProperty Name |
+Out-File localusers.txt
+
+
+Now you've got:
+
+Baseline
+    VS
+Current
+
+13. Why -ExpandProperty Name?
+
+Nice little PowerShell concept here.
+
+Instead of storing the complete service objects and display formatting, the lab extracts the Name value.
+
+So instead of lots of columns:
+
+Status    Name            DisplayName...
+
+
+you get essentially:
+
+AarSvc
+AJRouter
+ALG
+AppIDSvc
+...
+
+
+That makes comparison easier.
+
+14. Services differential analysis
+
+Current services:
+
+$servicesnow = Get-Content .\services.txt
+
+
+Baseline:
+
+$servicesbaseline = Get-Content baseline\services.txt
+
+
+Then:
+
+Compare-Object $servicesbaseline $servicesnow
+
+
+And the lab finds:
+
+Dynamics    =>
+
+
+Remember our arrow rule?
+
+=>
+
+Current/difference side
+
+So:
+
+Dynamics exists in the machine's current service list but wasn't in the baseline.
+
+That makes Dynamics a new service worth investigating.
+
+It doesn't alone prove the service is malicious.
+
+15. Users differential analysis
+
+Same exact methodology.
+
+Current:
+
+$usersnow = Get-Content .\localusers.txt
+
+
+Baseline:
+
+$usersbaseline = Get-Content .\baseline\localusers.txt
+
+
+Compare:
+
+Compare-Object $usersbaseline $usersnow
+
+
+Result:
+
+dynamics    =>
+
+
+So the lab identifies a new local account:
+
+dynamics
+
+
+Again:
+
+=>
+
+
+means present on the current/difference side.
+
+🧠 Notice what just happened
+
+We've now found:
+
+Process:
+calcache.exe
+      ↓
+Network:
+TCP/4444 LISTENER
+      ↓
+Persistence:
+HKCU Run → calcache.exe
+
+
+And differential analysis then reveals:
+
+New service:
+Dynamics
+
+
+and:
+
+New user:
+dynamics
+
+
+At this point, the investigation is expanding.
+
+That's DAIR happening practically:
+
+🔄 NEW IOC → SCOPE FURTHER
+
+You don't say:
+
+“We killed calcache, done.”
+
+Instead:
+
+“What else changed?”
+
+⭐ What you need to remember from this lab so far
+Running processes
+Get-Process
+
+Select specific fields
+Select-Object -Property Path,Name,Id
+
+Filtering
+Where-Object
+
+
+Example concept:
+
+Where-Object -Property Path -Like "*temp*"
+
+TCP activity
+Get-NetTCPConnection
+
+Map suspicious connection to process
+
+Look at:
+
+OwningProcess
+
+
+then correlate that PID with:
+
+Get-Process
+
+Registry keys
+Get-ChildItem
+
+Registry values
+Get-ItemProperty
+
+Remove a registry value
+Remove-ItemProperty
+
+Services
+Get-Service
+
+Local users
+Get-LocalUser
+
+Scheduled tasks
+Get-ScheduledTask
+
+Load saved results
+Get-Content
+
+Compare baseline/current
+Compare-Object
+
+
+And burn this into memory:
+
+<=  BASELINE / REFERENCE
+
+=>  CURRENT / DIFFERENCE
+
+🎯 Exam-style takeaway
+
+If GCIH gives you:
+
+You have a known-good list of services and want to quickly identify services that appeared after compromise. What technique should you use?
+
+Answer:
+
+Differential analysis
+
+using the concept of:
+
+Known-good baseline
+       ↓
+ Compare-Object
+       ↑
+ Current state
+
+
+And if the output is:
+
+Dynamics    =>
+
+
+you should immediately understand:
+
+Dynamics exists in the current results but not in the reference baseline.
+
+You're stopping at the perfect point actually. Scheduled Tasks differential analysis is the next logical step, because we've already found process/network/registry artifacts plus a new service and a new account. The next question is whether the attacker established another persistence mechanism through scheduled execution.
+Yep. This finishes Lab 1.1 and also shows how all those PowerShell commands connect together in a real investigation. Let's continue exactly from where we stopped.
+
+1. Scheduled Task Differential Analysis
+
+We already compared:
+
+Services → found Dynamics
+Local users → found dynamics
+
+Now we're asking:
+
+Did anything new get added as a scheduled task?
+
+First:
+
+Get-ScheduledTask
+
+
+Shows all scheduled tasks, but the list is large. So instead of manually guessing which one is suspicious, the lab uses the baseline.
+
+Current tasks:
+
+$scheduledtasksnow = Get-Content .\scheduledtasks.txt
+
+
+Known-good tasks:
+
+$scheduledtasksbaseline = Get-Content .\baseline\scheduledtasks.txt
+
+
+Compare them:
+
+Compare-Object $scheduledtasksbaseline $scheduledtasksnow
+
+
+Result:
+
+Microsoft eDynamics    =>
+
+
+You already know what => means:
+
+Present on current/difference side, not the baseline.
+
+So the added scheduled task is:
+
+Microsoft eDynamics
+
+2. But "new scheduled task" isn't enough
+
+This is important.
+
+At this point we know:
+
+Microsoft eDynamics wasn't in our baseline.
+
+But we still don't know:
+
+What does the task actually execute?
+
+That's where this comes in:
+
+Export-ScheduledTask -TaskName "Microsoft eDynamics"
+
+
+Scheduled tasks are represented as XML.
+
+Near the bottom, the lab examines the <Actions> section.
+
+That's the important part because Actions tell you what the task executes.
+
+So your investigation logic is:
+
+Get-ScheduledTask
+        ↓
+What tasks exist?
+
+Compare-Object
+        ↓
+What's new?
+
+Microsoft eDynamics
+        ↓
+Export-ScheduledTask
+        ↓
+What does this task actually execute?
+
+
+That's a much better investigation than trusting the task's name.
+
+3. Now all the evidence starts correlating
+
+The lab has identified several related components:
+
+Process
+dynamics
+
+Service
+Dynamics
+
+Executable
+C:\Windows\dynamics.exe
+
+Scheduled task
+Microsoft eDynamics
+
+Local account
+dynamics
+
+
+This is exactly the principle we've been discussing:
+
+One IOC leads to another IOC.
+
+Individually, a new user or service might require validation.
+
+Together, the related artifacts build much stronger investigative context.
+
+4. Cleanup demonstrates eradication
+
+Now the lab removes the identified components.
+
+Stop the service:
+
+Stop-Service -Name Dynamics
+
+
+Stop the process:
+
+Get-Process dynamics | Stop-Process
+
+
+Remove the executable:
+
+Remove-Item C:\Windows\dynamics.exe
+
+
+Remove the service.
+
+The lab shows a CIM method, but also the simpler legacy command:
+
+sc.exe delete dynamics
+
+
+Notice the .exe.
+
+Remember what SEC504 told us?
+
+When using legacy Windows utilities inside PowerShell, explicitly using .exe helps avoid confusion with PowerShell aliases.
+
+Then remove scheduled task:
+
+Unregister-ScheduledTask -TaskName "Microsoft eDynamics"
+
+
+And remove the local user:
+
+Remove-LocalUser -Name dynamics
+
+
+So eradication here isn't simply:
+
+Kill dynamics.exe
+
+
+It's:
+
+Process
++
+Executable
++
+Service
++
+Scheduled task
++
+Local account
+
+
+That's a much more complete eradication.
+
+5. What were the two malware-like samples in the lab?
+
+The lab summarizes two:
+
+Calcache
+
+You discovered it through:
+
+Process enumeration
+        ↓
+Temp-path execution
+        ↓
+TCP/4444 listener
+        ↓
+PID correlation
+        ↓
+Registry Run persistence
+
+Dynamics
+
+You primarily discovered related artifacts using:
+
+Baseline
+    ↓
+Differential analysis
+    ↓
+New service
+New user
+New scheduled task
+    ↓
+Investigate task details
+    ↓
+Related executable/process
+
+
+That's actually a nice contrast.
+
+Calcache = behavior exposed it
+
+Dynamics = differences from known-good exposed it
+
+6. Bonus challenge: this is VERY useful practice
+
+The bonus challenge basically makes you perform the investigation yourself without being handed the answer.
+
+Q1: What TCP port is the backdoor listening on?
+
+First create a baseline:
+
+Get-NetTCPConnection -State Listen |
+Out-File tcpports-baseline.txt
+
+
+After the backdoor starts:
+
+Get-NetTCPConnection -State Listen |
+Out-File tcpports-current.txt
+
+
+Load them:
+
+$baseline = Get-Content .\tcpports-baseline.txt
+$current = Get-Content .\tcpports-current.txt
+
+
+Compare:
+
+Compare-Object $baseline $current
+
+
+In the example, the newly appearing listener is on:
+
+14914
+
+
+The important part isn't memorizing 14914, because the lab says answers can change.
+
+The important thing is the technique:
+
+Baseline listeners → current listeners → compare
+
+7. Find who owns the suspicious port
+
+Once the new port is known:
+
+Get-NetTCPConnection -State Listen |
+Where-Object LocalPort -EQ 14914 |
+Select-Object -Property OwningProcess
+
+
+Example output:
+
+OwningProcess
+-------------
+1740
+
+
+Meaning:
+
+PID 1740 owns that listener.
+
+Again:
+
+Suspicious port
+      ↓
+OwningProcess
+      ↓
+PID
+
+
+That's an important IR pivot.
+
+8. Find the parent process
+
+Now you know:
+
+PID = 1740
+
+
+But:
+
+Who launched PID 1740?
+
+This is where Get-Process isn't ideal.
+
+Use:
+
+Get-CimInstance -Class Win32_Process |
+Where-Object -Property ProcessId -EQ 1740
+
+
+Then specifically retrieve parent PID:
+
+Get-CimInstance -Class Win32_Process |
+Where-Object ProcessId -EQ 1740 |
+Select-Object -Property ParentProcessId
+
+
+Example:
+
+ParentProcessId
+---------------
+8800
+
+
+Now you have:
+
+Port 14914
+     ↓
+PID 1740
+     ↓
+Parent PID 8800
+
+
+🔥 This is exactly the parent-child investigation we learned earlier.
+
+9. The backdoor changes its port
+
+Later the exercise says the process is listening on another port.
+
+But now you already know the suspicious PID.
+
+So instead of hunting all network connections again:
+
+Get-NetTCPConnection -State Listen |
+Where-Object OwningProcess -EQ 1740 |
+Select-Object -Property LocalPort
+
+
+Beautiful pivot:
+
+Earlier:
+
+Port → PID
+
+
+Now:
+
+PID → Port
+
+
+That's exactly how investigators navigate evidence.
+
+10. Stop a process using its PID
+
+The lab shows two approaches.
+
+Longer:
+
+Get-Process |
+Where-Object -Property Id -EQ 1740
+
+
+But Get-Process already supports -Id, so:
+
+Get-Process -Id 1740
+
+
+Much cleaner.
+
+Then:
+
+Get-Process -Id 1740 | Stop-Process
+
+
+Think:
+
+Get the process object
+       |
+       ↓
+Stop that object
+
+
+That's the PowerShell pipeline concept again.
+
+11. Then comes a trickier PowerShell backdoor
+
+Now the lab says there's a PowerShell-based process, but it isn't listening on a port.
+
+So network connections can't necessarily lead you to it.
+
+This connects directly back to something SEC504 said earlier:
+
+You cannot depend exclusively on network evidence.
+
+Instead:
+
+Get-Process -Name powershell
+
+
+But there are multiple PowerShell processes.
+
+One belongs to you, because you're performing the investigation.
+
+Another is suspicious.
+
+How do you distinguish them?
+
+Use start time:
+
+Get-Process -Name powershell |
+Select-Object Id,StartTime
+
+
+Now you compare the process start times with your investigative context.
+
+Again, this isn't:
+
+PowerShell = malicious.
+
+It's:
+
+Which PowerShell process fits the suspicious timeline/context?
+
+12. Now -ExpandProperty makes PERFECT sense
+
+This part actually ties directly into the question you asked a few minutes ago.
+
+The lab needs the entire PowerShell command line.
+
+So:
+
+Get-CimInstance -Class Win32_Process |
+Where-Object -Property ProcessId -EQ 6060 |
+Select-Object -ExpandProperty CommandLine
+
+
+Why ExpandProperty?
+
+Because you don't want:
+
+CommandLine
+-----------
+powershell.exe bla bla bla...
+
+
+potentially formatted/truncated for display.
+
+You want the actual CommandLine value:
+
+powershell.exe -nop -exec bypass -enc ...
+
+
+So in this case:
+
+-ExpandProperty CommandLine
+
+
+means:
+
+Pull the actual CommandLine value out of the object.
+
+This is an excellent real-world example of what we were just discussing.
+
+13. Encoded command
+
+The command line contains an encoded value following an encoding-related PowerShell argument.
+
+You've already learned the investigation concept:
+
+Encoded PowerShell
+      ↓
+Don't immediately say malware
+      ↓
+Extract encoded content
+      ↓
+Decode
+      ↓
+Understand behavior
+
+
+SEC504 mentions CyberChef as one way of handling this in the course material you pasted.
+
+The lab also demonstrates decoding within PowerShell.
+
+The key exam lesson is less about memorizing that long decoding expression and more about knowing:
+
+Encoded command-line content should be decoded and examined rather than treated as inherently malicious.
+
+🧠 Lab 1.1 complete mental model
+
+This is what I'd retain for GCIH:
+
+              WINDOWS LIVE INVESTIGATION
+
+                      PROCESS
+                   Get-Process
+                       │
+                       ↓
+                 suspicious.exe
+                       │
+             ┌─────────┴─────────┐
+             ↓                   ↓
+          NETWORK             PROCESS DETAIL
+ Get-NetTCPConnection        Get-CimInstance
+             │                   │
+             ↓                   ↓
+      Port / connection      Parent + CommandLine
+             │
+             ↓
+         PERSISTENCE
+       ┌─────┼──────┐
+       ↓     ↓      ↓
+   Registry Service Task
+                       │
+                       ↓
+                    ACCOUNTS
+                       │
+                       ↓
+                   BASELINE
+                       │
+                       ↓
+                Compare-Object
+                       │
+                       ↓
+                 NEW ARTIFACT
+                       │
+                       ↓
+                  INVESTIGATE
+                       │
+                       ↓
+                 🔄 SCOPE AGAIN
+
+🔥 Commands from the lab I'd know well
+See processes
+Get-Process
+
+Find by PID
+Get-Process -Id 1740
+
+See detailed process info
+Get-CimInstance -Class Win32_Process
+
+Parent PID
+Get-CimInstance -Class Win32_Process |
+Where-Object ProcessId -EQ 1740 |
+Select-Object ParentProcessId
+
+Full command line
+Get-CimInstance -Class Win32_Process |
+Where-Object ProcessId -EQ 1740 |
+Select-Object -ExpandProperty CommandLine
+
+TCP listeners
+Get-NetTCPConnection -State Listen
+
+Find PID owning port
+Get-NetTCPConnection -State Listen |
+Where-Object LocalPort -EQ 14914 |
+Select-Object OwningProcess
+
+Find port owned by PID
+Get-NetTCPConnection -State Listen |
+Where-Object OwningProcess -EQ 1740 |
+Select-Object LocalPort
+
+Scheduled tasks
+Get-ScheduledTask
+
+Examine a task
+Export-ScheduledTask -TaskName "Microsoft eDynamics"
+
+Compare baseline
+Compare-Object $baseline $current
+
+
+Remember:
+
+=> current
+ <= baseline
+
+🎯 The biggest lesson from Lab 1.1
+
+You're not supposed to remember that calcache.exe or Dynamics are the answers.
+
+You're learning an investigation process:
+
+Find anomaly → correlate PID/process/network → inspect persistence → compare against baseline → discover additional artifacts → pivot again.
+
+And this is exactly why your earlier understanding of Process Explorer vs Process Monitor matters too. PowerShell is letting you manually ask the same kinds of questions:
+
+What's running? What is it doing? What is it connected to? What keeps it running? What changed from normal?
+
+That is the real skill SEC504 is trying to build here.
