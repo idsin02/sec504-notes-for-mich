@@ -1,0 +1,546 @@
+Yep. This is the start of the Network Investigation section. Compared with the PowerShell section, there aren't that many new concepts yet. The big ones are where network evidence comes from, tcpdump, BPF filters, and proxy logs.
+
+1. Why investigate the network?
+
+The basic idea is:
+
+Most attackers operating remotely eventually need some form of network communication.
+
+So network evidence can help answer:
+
+Which systems communicated?
+When?
+On which ports/protocols?
+With which external/internal IP?
+Was there repeated communication?
+What web resources were requested?
+How does network activity fit into the incident timeline?
+
+But SEC504 makes a very important point:
+
+Network evidence should not be your only evidence.
+
+Combine it with:
+
+Network + Live Host Analysis + Memory + Malware Analysis
+
+Remember our previous section? You might see suspicious.exe on the host, then use network evidence to determine what that process was communicating with.
+
+2. Three sources of network evidence
+① Raw network traffic
+
+Usually:
+
+Live packet capture
+or
+Saved .pcap / .pcapng
+
+
+This gives you low-level packet information.
+
+② Network devices
+
+Examples:
+
+Firewalls
+Routers
+Proxies
+Network flow sources
+
+These may not contain every byte of traffic, but they can provide useful communication records.
+
+③ Host devices
+
+The host itself may record information concerning network activity.
+
+For example, Windows logs and endpoint telemetry can contribute evidence.
+
+This is basically what you've already been doing with Defender:
+
+Endpoint process + network activity = much stronger context.
+
+3. Three limitations of network evidence
+
+Remember:
+
+Accessibility
+
+Can I actually get the data?
+
+Some devices make exporting/analyzing their information difficult.
+
+Fidelity
+
+How much detail was actually recorded?
+
+A packet capture and a firewall log don't necessarily contain the same level of information.
+
+Encryption
+
+Can I actually see the content?
+
+Encryption can mean you can observe communication metadata while not necessarily seeing the underlying application content.
+
+So:
+
+Network visibility doesn't always mean content visibility.
+
+4. tcpdump ⭐
+
+Now we're entering something worth memorizing.
+
+tcpdump is a command-line packet capture and packet-analysis tool.
+
+Think:
+
+Capture packets + read PCAPs + filter traffic
+
+List available interfaces
+tcpdump -D
+
+
+Think:
+
+"Display available interfaces"
+
+Capture on interface
+tcpdump -i eth0
+
+
+-i = interface
+
+Capture and save packets
+tcpdump -i vmnet42 -w output.pcap
+
+
+Think:
+
+-i → interface
+-w → write
+
+
+So:
+
+Capture traffic on vmnet42 and write packets to output.pcap.
+
+5. Reading PCAP files
+
+This is extremely important.
+
+tcpdump -r packets.pcap
+
+
+-r = read
+
+Think:
+
+-w WRITE
+ -r READ
+
+Easy.
+
+Don't resolve names
+tcpdump -nnr packets.pcap
+
+
+The -n behavior tells tcpdump not to perform name/service resolution. The course notes that some versions may use -nn.
+
+For investigation this can help you retain things like:
+
+192.168.1.20
+10.0.0.5
+443
+
+
+rather than tcpdump presenting resolved names/services.
+
+Memory:
+
+n = numeric
+
+6. Show ASCII packet content
+tcpdump -nnr packets.pcap -A
+
+
+-A means:
+
+Display packet content as ASCII where applicable.
+
+So this:
+
+tcpdump -r file.pcap -n -A
+
+
+roughly means:
+
+Read the capture → don't resolve names → show printable ASCII content
+
+7. BPF: Berkeley Packet Filter ⭐⭐⭐
+
+This is probably the biggest exam concept from this section.
+
+Instead of reading thousands/millions of packets, you tell tcpdump:
+
+Show me only traffic meeting these conditions.
+
+That's where BPF filters come in.
+
+Think of it somewhat like the network equivalent of:
+
+Where-Object
+
+
+😄
+
+You've already learned:
+
+Get-Process | Where-Object ...
+
+
+Now you're doing:
+
+packets | BPF condition
+
+8. Three BPF qualifier concepts
+Type
+
+What are we matching?
+
+Examples:
+
+host
+net
+port
+portrange
+
+
+For example:
+
+tcpdump -nnr packets.pcap 'host 192.168.1.10'
+
+
+Meaning:
+
+Show packets involving that host.
+
+Direction
+
+Which direction?
+
+src = source
+dst = destination
+
+
+Example:
+
+tcpdump -nnr packets.pcap 'src host 192.168.1.10'
+
+
+Think:
+
+Show packets whose source host is 192.168.1.10.
+
+And:
+
+tcpdump -nnr packets.pcap 'dst port 443'
+
+
+Think:
+
+Destination port 443.
+
+Protocol
+
+Examples:
+
+tcp
+udp
+icmp
+ip
+
+
+Example:
+
+tcpdump -nnr packets.pcap 'tcp port 443'
+
+
+Think:
+
+Show TCP packets involving port 443.
+
+9. Combine filters
+
+BPF allows Boolean logic:
+
+and
+or
+not
+
+
+For example:
+
+tcpdump -nnr packets.pcap 'tcp and dst port 443'
+
+
+Conceptually:
+
+TCP traffic AND destination port 443.
+
+Or:
+
+tcpdump -nnr packets.pcap 'udp or icmp'
+
+
+And parentheses can control precedence/clarify the expression.
+
+So think:
+
+BPF = KQL/Where-Object thinking for packets
+
+
+That's probably the easiest connection for you.
+
+10. Web Proxies
+
+Now we're moving away from raw packets.
+
+A web proxy sits in the path of web requests and can record them.
+
+The major IR benefit is:
+
+Proxy logs can tell us about web activity.
+
+That can help reconstruct:
+
+Device/user
+   ↓
+Requested URL/domain
+   ↓
+HTTP method
+   ↓
+Response/result
+   ↓
+Timestamp
+
+
+SEC504 uses Squid as the example proxy.
+
+11. Squid access.log ⭐
+
+This is worth understanding because it can appear overwhelming at first.
+
+A line might conceptually look like:
+
+1583050850.951 185 192.168.42.109 TCP_MISS/200 1856 POST https://...
+
+
+Don't try to memorize the string.
+
+Break it into fields.
+
+Timestamp
+
+When the request was logged.
+
+The Squid format shown uses Unix/Epoch-style time.
+
+Duration
+
+How long the proxy spent handling the request, in the format described in your material.
+
+Client
+
+The IP address that made the request.
+
+Example:
+
+192.168.42.109
+
+
+Think:
+
+Who requested it?
+
+Result code
+
+Proxy result + HTTP status information.
+
+For example the slide shows:
+
+TCP_MISS/200
+
+Size
+
+Amount of data sent to the client.
+
+HTTP method
+
+Examples:
+
+GET
+POST
+
+
+Think:
+
+What kind of HTTP request?
+
+URL
+
+The requested resource, when available.
+
+This can obviously be highly useful during an incident.
+
+User
+
+Identity associated with the request, if available.
+
+Hierarchy code
+
+Describes how Squid handled the request.
+
+Content type
+
+The response's content type.
+
+🔥 Let's connect this back to your threat hunting
+
+Suppose tomorrow during a hunt you have:
+
+Unknown.exe
+     ↓
+External IP
+     ↓
+443
+
+
+Endpoint evidence tells you:
+
+What process initiated the communication?
+
+Network/packet evidence can add:
+
+When did communication occur? What network behavior occurred?
+
+Proxy evidence may add:
+
+What web request/resource/domain was involved, where available?
+
+Threat intelligence may add:
+
+What is known about the destination?
+
+Then you correlate everything.
+
+That's why SEC504 keeps saying:
+
+Don't rely on a single source.
+
+🧠 GCIH Cheat Sheet for this module
+
+Memorize these first:
+
+tcpdump -D
+
+
+List interfaces
+
+tcpdump -i eth0
+
+
+Capture from interface
+
+tcpdump -i eth0 -w output.pcap
+
+
+Capture + save
+
+tcpdump -r packets.pcap
+
+
+Read PCAP
+
+tcpdump -nnr packets.pcap
+
+
+Read without resolving names/ports
+
+tcpdump -nnr packets.pcap -A
+
+
+Read + ASCII
+
+BPF
+
+Think:
+
+TYPE
+host
+net
+port
+portrange
+
+DIRECTION
+src
+dst
+
+PROTOCOL
+tcp
+udp
+icmp
+ip
+
+LOGIC
+and
+or
+not
+()
+
+🎯 What I'd actually remember for the exam
+Network evidence sources
+
+Traffic + network devices + hosts
+
+Limitations
+
+Accessibility + fidelity + encryption/visibility
+
+tcpdump
+
+Capture/read/filter packets
+
+-i
+
+Interface
+
+-w
+
+Write PCAP
+
+-r
+
+Read PCAP
+
+-n / -nn
+
+Don't resolve, keep numeric representation
+
+-A
+
+ASCII
+
+BPF
+
+Filter packets by host/network/port/protocol/direction and Boolean conditions
+
+Proxy logs
+
+Give you useful web-request evidence such as:
+
+time + client + result + size + method + URL + user + hierarchy + content type
+
+And here's the one mental model I'd carry forward:
+
+PowerShell tells us what's happening on the Windows host; tcpdump tells us what's happening in captured network packets; proxy logs tell us about recorded web requests. Correlating these sources gives us much stronger incident evidence than any one of them alone.
+
+This module is considerably simpler than the PowerShell one so far. The part I'd focus most on next is getting comfortable reading BPF filters, because once src, dst, host, port, tcp/udp, and/or/not become natural, tcpdump questions become much easier.
