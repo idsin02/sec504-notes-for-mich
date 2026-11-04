@@ -1,0 +1,651 @@
+Yep, this is the practical network-investigation lab that connects DAIR scoping with Squid logs and tcpdump. The big story is: one CEO workstation alert expands into an almost environment-wide compromise through repeated pivots.
+
+1. Starting point
+
+Known initially:
+
+CEO workstation: 172.16.42.107
+Ransom note appeared around 1 PM
+Ransom-note domain: midnitemeerkats.com
+Therefore 172.16.42.107 is the initial known compromised host.
+
+That gives you two excellent pivots:
+
+HOST → 172.16.42.107
+DOMAIN → midnitemeerkats.com
+
+
+This is DAIR Scope in practice.
+
+2. First pivot: search the Squid proxy
+
+They search:
+
+grep midnitemeerkats access.log
+
+
+Why?
+
+Because access.log contains the web requests observed by Squid.
+
+It finds requests from:
+
+172.16.42.107
+
+
+to the ransom-note site.
+
+So now an endpoint observation:
+
+“Ransom note popped up around 1 PM”
+
+has network evidence supporting it.
+
+3. awk reduces the noise
+
+The raw Squid entry has lots of fields. We only care about:
+
+$1 → timestamp
+$3 → requesting client
+$7 → requested URL
+
+So:
+
+awk '/midnitemeerkats/ {print $1, $3, $7}' access.log
+
+
+means:
+
+For lines containing midnitemeerkats, print fields 1, 3 and 7.
+
+Think of awk here almost like:
+
+Select-Object
+
+
+You're reducing the data to the fields you actually need.
+
+4. Convert Epoch time
+
+Squid's timestamp isn't convenient for a human.
+
+So they use strftime() inside awk and set the timezone:
+
+TZ=America/Los_Angeles awk \
+'/midnitemeerkats/ {print strftime("%T",$1), $3, $7}' access.log
+
+
+Now they can see activity around:
+
+13:05:56
+13:05:59
+13:06:00
+
+
+So the CEO saying “around 1 PM” correlates reasonably well with the recorded network activity around 1:05-1:06 PM.
+
+Important IR lesson
+
+Don't expect human recollection to give you second-level precision.
+
+Use the human report as an anchor, then establish precise timing from evidence.
+
+5. Now look for beaconing
+
+This is where things become much more interesting.
+
+Instead of only looking for the ransom-note site, the analysts ask:
+
+Is the CEO machine repeatedly communicating somewhere?
+
+The lab's findbeacons.py looks for repeated requests at roughly consistent intervals.
+
+Conceptually:
+
+13:00:00 → destination
+13:00:05 → destination
+13:00:10 → destination
+13:00:15 → destination
+...
+
+
+That repeating pattern can indicate beacon-like activity.
+
+Again:
+
+Beacon-like ≠ automatically C2.
+
+But it's an excellent investigation lead.
+
+6. Suspicious lookalike domain
+
+The lab finds traffic to something resembling:
+
+www1-google-analytics.com
+
+
+The important lesson isn't memorizing the domain.
+
+It's recognizing lookalike infrastructure.
+
+At a quick glance:
+
+www1-google-analytics.com
+
+
+might look like something associated with legitimate Google Analytics.
+
+But analysts should validate the actual domain rather than mentally interpreting familiar words inside it.
+
+This connects perfectly to your earlier question about something that looks like a Microsoft domain.
+
+Golden rule:
+
+Trust the actual domain/ownership/context, not how legitimate the hostname looks at first glance.
+
+7. Now PIVOT on the suspected C2 indicator ⭐
+
+This is the most important part.
+
+You've discovered a new indicator.
+
+DAIR says:
+
+🔄 GO BACK TO SCOPE
+
+They search Squid logs for other clients communicating with the suspicious domain:
+
+awk '/www1-google-analytics.com/ {print $3}' access.log | sort -u
+
+
+Breakdown:
+
+awk
+ ↓
+find matching requests
+
+print $3
+ ↓
+extract requesting IP
+
+sort -u
+ ↓
+return unique IP addresses
+
+
+This produces multiple internal hosts.
+
+So:
+
+CEO
+ ↓
+Suspicious beacon
+ ↓
+C2/domain IOC
+ ↓
+Search environment
+ ↓
+Additional hosts
+
+
+🔥 That's textbook scoping.
+
+8. But the proxy has a blind spot
+
+Remember from the previous module?
+
+Squid logs aren't necessarily showing all network traffic.
+
+The material specifically warns that HTTP/HTTPS on non-standard ports may not appear in the expected proxy evidence.
+
+So if you only search access.log, you may underestimate the incident.
+
+What do they do?
+
+Pivot to the PCAP.
+
+This is an important IR concept:
+
+When one data source reaches its visibility limit, pivot to another evidence source.
+
+9. Domain → IP
+
+First they need the IP associated with their IOC.
+
+They query existing evidence:
+
+grep www1-google-analytics.com access.log | head -n 1
+
+
+head -n 1 means:
+
+Give me the first result only.
+
+From the lab evidence they obtain:
+
+167.172.201.123
+
+
+Now they've transformed:
+
+DOMAIN IOC
+www1-google-analytics.com
+
+
+into:
+
+IP IOC
+167.172.201.123
+
+
+Another pivot.
+
+10. Search PCAP using tcpdump
+
+Now:
+
+tcpdump -nr falsimentis.pcap 'dst host 167.172.201.123'
+
+
+Translation:
+
+-n
+Don't resolve names
+
+-r falsimentis.pcap
+Read this PCAP
+
+dst host 167.172.201.123
+Show packets whose destination is that IP
+
+
+This reveals additional internal systems that weren't all apparent from the proxy investigation.
+
+That is precisely why SEC504 said:
+
+Don't rely upon one evidence source.
+
+11. The ugly cut command 😄
+
+The lab then does something like:
+
+tcpdump -nr falsimentis.pcap 'dst host 167.172.201.123' |
+cut -d ' ' -f 3 |
+cut -d '.' -f 1-4 |
+sort -u
+
+
+Don't memorize this whole string blindly.
+
+Understand the workflow:
+
+tcpdump
+
+Get packets going to suspicious IP.
+
+↓
+
+First cut
+
+Extract the source-address field from tcpdump's text output.
+
+↓
+
+Second cut
+
+Strip off the source port, leaving the IP.
+
+Think:
+
+172.16.42.107.50453
+        ↓
+172.16.42.107
+
+
+↓
+
+sort -u
+
+Give me only unique hosts.
+
+So effectively the command answers:
+
+Which distinct machines communicated with this suspicious destination?
+
+12. Scope massively expanded
+
+The investigation started with:
+
+172.16.42.107
+CEO
+
+
+But IOC pivoting finds other systems contacting the identified infrastructure, including systems such as:
+
+172.16.42.2
+172.16.42.3
+172.16.42.103
+172.16.42.105
+172.16.42.107
+172.16.42.108
+172.16.42.109
+
+
+This is the exact lesson from Argous again.
+
+Initial impression
+
+One employee's workstation has ransomware.
+
+After scoping
+
+The incident appears substantially broader.
+
+13. Find when activity started
+
+Now that we know WHO, the next question is:
+
+WHEN?
+
+They use tcpdump -c 1.
+
+This part matters:
+
+-c 1
+
+
+means:
+
+Stop after the first matching packet.
+
+Therefore for each compromised system:
+
+Host → suspicious destination
+
+
+they retrieve the first observed matching packet.
+
+This helps construct an incident timeline.
+
+14. The for loop looks horrible, but conceptually it's easy 😂
+
+You see:
+
+for octet in 2 3 103 105 107 108 109; do
+   ...
+done
+
+
+It's basically saying:
+
+Run the same tcpdump search for each suspected internal host.
+
+Instead of manually typing:
+
+172.16.42.2
+172.16.42.3
+172.16.42.103
+172.16.42.105
+...
+
+
+the loop changes $octet each time:
+
+172.16.42.$octet
+
+
+Simple automation.
+
+15. Here's an important finding: port 8090
+
+The initial matching packets are communicating to:
+
+167.172.201.123:8090
+
+
+Notice:
+
+8090
+
+not traditional HTTP 80 or HTTPS 443.
+
+🔥 This explains why relying solely on the proxy evidence could miss useful network activity.
+
+So now the lesson becomes extremely clear:
+
+Proxy logs
+     ↓
+valuable but incomplete
+
+PCAP
+     ↓
+reveals additional traffic
+
+16. Then specifically investigate port 80
+
+They modify the BPF expression by adding:
+
+and dst port 80
+
+
+So now:
+
+src host X
+AND
+dst host 167.172.201.123
+AND
+dst port 80
+
+
+This is a great BPF example.
+
+Break it down:
+
+src host
+→ Who sent it?
+
+dst host
+→ Where did it go?
+
+dst port
+→ Which destination service/port?
+
+
+All conditions must match because they're joined with:
+
+and
+
+🧠 This lab is basically one giant PIVOT exercise
+
+Start:
+
+CEO reports ransom note
+
+
+↓
+
+Pivot #1
+Ransom domain
+
+
+↓
+
+Search proxy.
+
+↓
+
+Pivot #2
+CEO IP
+
+
+↓
+
+Analyze activity.
+
+↓
+
+Pivot #3
+Beacon-like domain
+
+
+↓
+
+Search proxy across users/hosts.
+
+↓
+
+Pivot #4
+Domain → IP
+
+
+↓
+
+Search PCAP.
+
+↓
+
+Pivot #5
+Suspicious destination IP
+
+
+↓
+
+Discover more hosts.
+
+↓
+
+Pivot #6
+Each affected host
+
+
+↓
+
+Retrieve earliest matching packet.
+
+↓
+
+BUILD TIMELINE
+
+That's threat hunting + incident scoping.
+
+17. Then they build an SE3R timeline
+
+Don't get too hung up on the visual.
+
+The important concept is:
+
+Event line
+
+Represents:
+
+What happened when?
+
+For example:
+
+09:10
+Host A activity
+
+09:38
+Host B activity
+
+...
+
+13:05
+CEO ransom note
+
+Knowledge bins
+
+Group related contextual information.
+
+Such as:
+
+Host
+IP
+Role
+Indicator
+Relevant evidence
+
+
+The advantage is that you're no longer looking at disconnected facts.
+
+You're reconstructing:
+
+The incident as a sequence of related events.
+
+🎯 Commands from this lab worth knowing
+Find a string
+grep midnitemeerkats access.log
+
+
+Search log lines.
+
+Extract fields
+awk '/midnitemeerkats/ {print $1, $3, $7}' access.log
+
+
+Think:
+
+$1 = timestamp
+$3 = client
+$7 = URL
+
+
+for this Squid log format.
+
+Unique values
+sort -u
+
+
+Sort + unique results.
+
+First result
+head -n 1
+
+
+First line.
+
+PCAP destination search
+tcpdump -nr falsimentis.pcap 'dst host 167.172.201.123'
+
+
+Traffic destined for IOC IP.
+
+First matching packet
+tcpdump -nr falsimentis.pcap -c 1 '...filter...'
+
+
+Stop after first match.
+
+Add port constraint
+and dst port 80
+
+
+Destination must also be TCP/UDP port 80 as applicable to the filter context.
+
+🔥 Most important GCIH lesson from this lab
+
+Don't memorize the fictional IP addresses.
+
+Memorize the investigation logic:
+
+Known compromised host → identify related indicator → pivot on indicator → discover additional hosts → pivot to another evidence source → establish scope → extract timestamps → construct timeline.
+
+And notice how beautifully this fits DAIR:
+
+DETECT
+CEO ransom note
+     ↓
+VERIFY
+Network evidence confirms relevant activity
+     ↓
+SCOPE
+Known host → IOC → other hosts
+     ↓
+NEW IOC FOUND
+     ↓
+SCOPE AGAIN 🔄
+
+
+The Argous scenario taught you why poor scoping is dangerous.
+
+This Falsimentis lab is now teaching you how to perform that scoping using real evidence.
