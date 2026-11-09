@@ -1,0 +1,657 @@
+Yep. This malware-investigation lab is important because SEC504 is now combining the previous three areas:
+
+Static analysis → controlled dynamic analysis → persistence/process analysis → network analysis → feed new IOCs back into scoping
+
+And the CEO specifically said do not upload the malware, so the investigation stays local.
+
+1. Start with hashes
+Get-FileHash -Algorithm MD5 AnalyticsInstaller.exe
+
+Get-FileHash -Algorithm SHA256 AnalyticsInstaller.exe
+
+
+Why calculate hashes?
+
+A filename can change:
+
+AnalyticsInstaller.exe
+↓ rename
+totallynormal.exe
+
+
+but if the bytes are unchanged, the hash stays the same.
+
+That makes hashes useful for:
+
+Identifying the exact specimen
+Searching your own environment for copies
+Communicating IOCs
+Comparing samples
+
+For modern identification/hunting, SHA-256 is much stronger than MD5. The lab calculates both because you will encounter both in threat intelligence and IR.
+
+2. Static analysis with strings
+
+Before executing the specimen, inspect readable strings:
+
+strings.exe -n 10 .\AnalyticsInstaller.exe
+
+
+-n 10 means approximately:
+
+Only print strings that are at least 10 characters long.
+
+The lab finds several excellent leads.
+
+Network indicator
+www1-google-analytics.com:8088/analytics.exe
+
+
+Immediately add:
+
+Domain
+Port 8088
+File analytics.exe
+
+
+to your notes.
+
+But don't yet conclude exactly what that URL does. Strings are leads, not proof of runtime behavior.
+
+Persistence indicator
+Software\Microsoft\Windows\CurrentVersion\Run
+
+
+You already recognize this:
+
+Registry ASEP / autostart location
+
+Potential persistence.
+
+Destructive command
+
+The strings expose a command intended to recursively delete content from C:\.
+
+Given the ransom note threatening file destruction, that's extremely relevant.
+
+But, again:
+
+Presence of the string suggests capability. Dynamic evidence is stronger evidence that the malware actually configures or executes it.
+
+Encoded PowerShell
+
+You find:
+
+powershell.exe ... -EncodedCommand ...
+
+
+We've covered this.
+
+The investigation becomes:
+
+Extract → decode → understand
+
+not:
+
+Encoded PowerShell = automatically malicious.
+
+In this particular case, however, we're already examining a supplied malware installer, so it becomes important evidence about functionality.
+
+Ransom-note command
+
+A string indicates launching the Midnite Meerkats ransom-note URL.
+
+That helps correlate the specimen with the behavior observed on the CEO's workstation.
+
+3. Static vs dynamic analysis
+
+This lab gives you a really useful distinction.
+
+Static analysis
+
+You do not execute the specimen.
+
+Examples here:
+
+Hashes
+Strings
+
+
+You're asking:
+
+What can I learn from the file itself?
+
+Dynamic analysis
+
+You execute the specimen in a controlled lab and observe it.
+
+Examples:
+
+Regshot
+Procmon
+tcpdump
+
+
+You're asking:
+
+What does this program actually do when executed?
+
+That's much stronger for validating hypotheses discovered through strings.
+
+4. Regshot: Before vs After
+
+You already understand differential analysis.
+
+Regshot is basically applying the same idea to registry + filesystem changes.
+
+Think:
+
+BEFORE malware
+      ↓
+Snapshot 1
+
+Run malware
+
+      ↓
+Snapshot 2
+
+      ↓
+COMPARE
+
+
+You've already done this conceptually with:
+
+Compare-Object $baseline $current
+
+
+Regshot automates that style of comparison for relevant system changes.
+
+5. First Regshot finding: Scheduled Task
+
+The comparison finds something related to:
+
+...\Schedule\TaskCache\Tree\Analytics Backup
+
+
+That tells us a task was introduced.
+
+Confirm:
+
+Get-ScheduledTask -TaskName "Analytics Backup"
+
+
+This is another great IR methodology:
+
+Regshot finds artifact
+        ↓
+Form hypothesis
+        ↓
+PowerShell confirms actual scheduled task
+
+6. Registry ASEPs
+
+Regshot also exposes values associated with autostart behavior.
+
+Conceptually the lab identifies:
+
+Analytics Client
+     ↓
+analytics.exe
+
+
+and another autostart-related entry that opens the ransom note.
+
+Now static and dynamic evidence correlate:
+
+STRINGS
+CurrentVersion\Run
+       ↓
+REGSHOT
+actual Run-related modification
+
+
+🔥 Much stronger.
+
+You no longer merely have a suspicious string embedded in a binary.
+
+You saw the system modification after executing the specimen.
+
+7. WOW6432Node is not inherently suspicious
+
+You'll see something resembling:
+
+HKLM\SOFTWARE\WOW6432Node\...
+
+
+Don't think:
+
+Weird registry path = attacker.
+
+WOW6432Node relates to Windows' handling of 32-bit applications on 64-bit Windows.
+
+Same idea when you encounter:
+
+SysWOW64
+
+
+Those names themselves are legitimate Windows architecture artifacts.
+
+8. Files added
+
+Regshot finds artifacts such as:
+
+AnalyticsBackup.bat
+
+
+Then you inspect it:
+
+Get-Content C:\Windows\SysWOW64\AnalyticsBackup.bat
+
+
+And its content correlates with the destructive command previously discovered through strings.
+
+Beautiful evidence chain:
+
+STATIC ANALYSIS
+strings
+↓
+destructive command
+
+DYNAMIC ANALYSIS
+Regshot
+↓
+batch file created
+
+FILE INSPECTION
+Get-Content
+↓
+same destructive command
+
+
+That's exactly how you build confidence in an analysis.
+
+9. Next tool: Procmon
+
+Remember our discussion?
+
+Process Explorer
+
+What processes exist?
+
+Process Monitor / Procmon
+
+What are processes doing?
+
+Now you get to use that distinction for real.
+
+Launch:
+
+C:\tools\sysinternals\procmon.exe
+
+
+Then filter on:
+
+Process Name
+is
+AnalyticsInstaller.exe
+
+
+This prevents you from drowning in unrelated Windows activity.
+
+10. Procmon finds process creation
+
+You search for:
+
+Process Create
+
+
+And discover a chain conceptually like:
+
+AnalyticsInstaller.exe
+        ↓
+      cmd.exe
+        ↓
+  powershell.exe
+
+
+🔥 This is exactly what I meant when we discussed Process Monitor = what the process is doing.
+
+You're observing:
+
+Installer launches CMD → CMD launches PowerShell.
+
+Then the command lines provide additional context about how those children were invoked.
+
+11. Regshot vs Procmon
+
+This distinction is worth memorizing.
+
+Regshot
+
+Think:
+
+What changed between BEFORE and AFTER?
+
+Good for:
+
+Registry changes
+Filesystem changes
+
+
+It's differential/snapshot analysis.
+
+Procmon
+
+Think:
+
+What activity happened while I watched?
+
+Good for detailed activity such as:
+
+Process creation
+Registry operations
+File operations
+Network-related operations
+
+🧠 Memory trick
+
+RegSHOT = snapshots 📸
+
+ProcMON = monitor activity 👀
+
+12. Main malware behavior discovered
+
+By this point, the lab has evidence that AnalyticsInstaller.exe performs behavior including:
+
+Creates scheduled task Analytics Backup
+Creates AnalyticsBackup.bat
+Establishes registry-based autostart behavior
+Interacts with the suspicious analytics-lookalike infrastructure
+Attempts to obtain analytics.exe
+Creates functionality associated with displaying the ransom message
+Uses encoded PowerShell
+Creates artifacts associated with the destructive file-deletion threat
+
+That information is tremendously valuable for:
+
+Scope
+
+Where else do these artifacts exist?
+
+Containment
+
+Which infrastructure/hosts/accounts need restriction?
+
+Eradication
+
+What persistence/files/tasks need removal?
+
+Recovery
+
+What was modified and what underlying controls need remediation?
+
+13. Bonus: now network analysis validates static findings
+
+Static analysis exposed:
+
+www1-google-analytics.com
+
+
+Now execute in a controlled lab while watching DNS:
+
+sudo tcpdump -n -i eth0 'udp port 53'
+
+
+Breakdown:
+
+-n
+→ numeric, don't resolve names
+
+-i eth0
+→ monitor eth0
+
+udp port 53
+→ DNS-related UDP traffic on port 53
+
+
+And you see a DNS lookup for the suspicious hostname.
+
+🔥 Again:
+
+strings suggests domain
+       ↓
+tcpdump observes lookup
+
+
+Static hypothesis → dynamic evidence.
+
+14. Environment molding
+
+This is a clever malware-analysis concept.
+
+Rather than allowing the specimen to reach the real infrastructure, the lab modifies the controlled environment so the expected hostname points toward the lab system.
+
+Conceptually:
+
+Malware thinks:
+www1-google-analytics.com
+        ↓
+Lab redirects resolution
+        ↓
+Controlled analysis machine
+
+
+Now the analyst can observe what the malware tries to do without depending on the attacker's actual server.
+
+This should be done only in an isolated malware-analysis environment, as the course does.
+
+15. tcpdump reveals destination TCP/8088
+
+After changing the controlled environment, they observe a connection attempt toward:
+
+TCP/8088
+
+
+This is important because the earlier strings output suggested:
+
+:8088
+
+
+Now:
+
+STATIC
+string contains :8088
+
+        +
+
+DYNAMIC
+observed TCP connection to 8088
+
+
+Much stronger evidence.
+
+16. Controlled listener reveals HTTP
+
+The lab sets up a controlled listener and observes something similar to:
+
+GET /analytics.exe HTTP/1.1
+Host: www1-google-analytics.com:8088
+
+
+Now we've learned something new.
+
+The connection isn't merely:
+
+TCP/8088 communication.
+
+It appears to contain:
+
+An HTTP GET request for /analytics.exe.
+
+That helps explain what the installer appears to be trying to obtain.
+
+17. Then they test the hypothesis
+
+Hypothesis:
+
+AnalyticsInstaller.exe is trying to download analytics.exe via HTTP on TCP/8088.
+
+Rather than stopping at the HTTP request, the lab provides the expected object from a controlled server.
+
+Then the environment shows analytics.exe being written to the Windows machine.
+
+This is a very nice demonstration of diagnosticity.
+
+18. Diagnosticity ⭐
+
+This word matters.
+
+Don't merely ask:
+
+Does my evidence fit my theory?
+
+Also ask:
+
+Does my evidence distinguish my theory from reasonable competing explanations?
+
+Example:
+
+You see:
+
+GET /analytics.exe
+
+
+Hypothesis:
+
+It's downloading a payload.
+
+That fits.
+
+But another possibility might be:
+
+It's a check-in URI designed to resemble a download.
+
+So the investigators test further.
+
+Providing the expected object and observing the resulting file behavior gives additional evidence supporting the download hypothesis.
+
+🧠 That's scientific incident response.
+
+Not:
+
+“Looks malicious, therefore that's definitely what happened.”
+
+But:
+
+Hypothesis → test → observe → refine.
+
+This goes perfectly with how you prefer to write your hunt findings without overclaiming.
+
+19. Connect all four investigation modules
+
+Now SEC504 has given you a really nice progression:
+
+Live investigation
+What's happening on the running host?
+
+
+Tools:
+
+PowerShell
+Process Explorer
+Process Monitor
+TCPView
+Autoruns
+
+
+↓
+
+Network investigation
+What's communicating?
+
+
+Tools:
+
+tcpdump
+Squid logs
+BPF
+
+
+↓
+
+Memory investigation
+What evidence exists in captured RAM?
+
+
+Tools:
+
+WinPmem
+Volatility
+
+
+↓
+
+Malware investigation
+What does this executable appear to do?
+
+
+Tools/techniques:
+
+Hashes
+Strings
+Regshot
+Procmon
+Controlled network observation
+
+
+And every one feeds:
+
+🔄 DAIR → Scope again
+🎯 GCIH cheat sheet from this malware lab
+Hash file
+Get-FileHash -Algorithm SHA256 file.exe
+
+
+Identify specimen.
+
+Strings
+strings.exe -n 10 file.exe
+
+
+Look for embedded clues.
+
+But:
+
+Strings = leads, not proof.
+
+Regshot
+
+Before/after registry + filesystem comparison
+
+Procmon
+
+Detailed runtime activity
+
+Get-ScheduledTask
+
+Validate scheduled-task persistence.
+
+Get-Content
+
+Inspect file/script content.
+
+tcpdump
+
+Observe network behavior in the controlled lab.
+
+And the four analysis concepts you should know
+Analysis	QuestionHashing	Which exact specimen am I dealing with?
+Static analysis	What can I learn without executing it?
+Snapshot/differential analysis	What changed after execution?
+Continuous dynamic analysis	What did the process actually do while executing?
+
+The most important lesson here is not AnalyticsInstaller.exe itself.
+
+Never let one artifact determine your conclusion. Combine static indications with controlled dynamic observations, test competing explanations, turn confirmed findings into new IOCs, then feed those IOCs back into scoping.
+
+That's exactly the same methodology you should eventually apply to suspicious uncommon binaries in your threat hunts, except in a client environment you obviously don't execute an unknown specimen on a production endpoint just to see what happens.
